@@ -187,13 +187,13 @@ def test_boot_timeout(tmp_path):
         a.pass_stage(jid, "flash")
         a.event(jid, "job_finished", data={"result": "pass"})
         d = wait_for(lambda: (x := device(c, "CPU0001"))["tile"] == "fail" and x, timeout=5)
-        assert d["job"]["stages"]["boot"]["detail"] == "BOOT: no report"
+        assert d["job"]["stages"]["boot"]["detail"] == "BOOTCHECK: нет отчёта загрузки"
         # отчёт пришёл позже (оператор не успел снять microSD): PASS с замечанием
         assert boot(c, "CPU0001")["job_id"] == jid
         j = c.get(f"/api/v1/jobs/{jid}").json()
         assert j["status"] == "pass" and j["detail"] is None
         b = {s["stage"]: s for s in j["stages"]}["boot"]
-        assert b["state"] == "pass" and b["warnings"][0].startswith("BOOT: отчёт пришёл после таймаута")
+        assert b["state"] == "pass" and b["warnings"][0].startswith("BOOTCHECK: отчёт пришёл после таймаута")
         assert device(c, "CPU0001")["tile"] == "pass"
         # повторный отчёт уже ничего не меняет
         assert boot(c, "CPU0001")["job_id"] is None

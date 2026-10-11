@@ -6,7 +6,7 @@ export const STAGE_LABEL: Record<StageName, string> = {
   net: 'NET',
   sdnand: 'SD',
   flash: 'FLASH',
-  boot: 'BOOT',
+  boot: 'CHECKB',
 }
 
 export const STAGE_LONG: Record<StageName, string> = {
@@ -14,7 +14,7 @@ export const STAGE_LONG: Record<StageName, string> = {
   net: 'NET',
   sdnand: 'SD-NAND',
   flash: 'FLASH',
-  boot: 'BOOT',
+  boot: 'BOOTCHECK',
 }
 
 export const MODE_LABEL: Record<Mode, string> = {
@@ -170,7 +170,7 @@ export function currentStageLine(job: JobView | null, tile: Tile): string {
     return job.detail || 'не выполнено'
   }
   // Текст ожидания BOOT задаёт сервер: что сделать оператору и что видно в сети
-  if (job.status === 'awaiting_boot') return st.boot?.detail ? `BOOT: ${st.boot.detail}` : 'BOOT: ожидание загрузки'
+  if (job.status === 'awaiting_boot') return st.boot?.detail ? `BOOTCHECK: ${st.boot.detail}` : 'BOOTCHECK: ожидание загрузки'
   for (const name of STAGES) {
     const s = st[name]
     if (s && s.state === 'running') return runningText(name, s)
@@ -250,4 +250,10 @@ export function previousText(p: PreviousResult): string {
   const warn = p.status === 'pass' && p.warnings_count ? ' ⚠' : ''
   const why = p.status !== 'pass' && p.detail ? ` (${p.detail})` : ''
   return `уже проверялась: ${res}${warn}${why} · ${formatShort(p.finished_at)} · ${MODE_LABEL[p.mode] ?? p.mode}`
+}
+
+/** Этапы, которые рисуются на полоске: BOOTCHECK — только если он входит в задание. */
+export function shownStages(job: JobView | null): StageName[] {
+  const boot = job?.stages?.boot?.state
+  return STAGES.filter((n) => n !== 'boot' || (boot !== undefined && boot !== 'skipped'))
 }

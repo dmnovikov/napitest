@@ -82,8 +82,8 @@ describe('tile helpers', () => {
   })
   it('awaiting boot shows server instruction', () => {
     const j = job({ status: 'awaiting_boot', stages: { boot: { state: 'running', detail: 'ждём загрузки с SD-NAND' } } })
-    expect(currentStageLine(j, 'awaiting_boot')).toBe('BOOT: ждём загрузки с SD-NAND')
-    expect(currentStageLine(job({ status: 'awaiting_boot' }), 'awaiting_boot')).toBe('BOOT: ожидание загрузки')
+    expect(currentStageLine(j, 'awaiting_boot')).toBe('BOOTCHECK: ждём загрузки с SD-NAND')
+    expect(currentStageLine(job({ status: 'awaiting_boot' }), 'awaiting_boot')).toBe('BOOTCHECK: ожидание загрузки')
   })
   it('previous result line', () => {
     const p = { job_id: 'j', status: 'pass', mode: 'test_flash' as const, finished_at: '2026-10-11T14:32:00', batch: 'B', detail: null, warnings_count: 1 }

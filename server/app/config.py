@@ -135,6 +135,12 @@ class Profile:
         sd = self.section("sdnand")
         flash = self.section("flash")
 
+        boot_opt = options.get("boot") or "check"
+        if boot_opt not in ("check", "skip"):
+            raise ValueError("boot: check | skip")
+        stages = self.stages_for_mode(mode)
+        if boot_opt == "skip":
+            stages["boot"] = False   # BOOTCHECK не нужен: итог сразу после FLASH, без ожидания
         net_check = options.get("net") or "quick"
         if net_check not in ("quick", "full"):
             raise ValueError("net: quick | full")
@@ -159,7 +165,7 @@ class Profile:
         return {
             "profile": self.name,
             "destructive_enabled": self.hardware_validated or destructive_override,
-            "stages": self.stages_for_mode(mode),
+            "stages": stages,
             "ram": ram_params,
             "net": {**{k: net[k] for k in (
                 "iface", "expect_speed", "expect_duplex", "iperf_seconds", "min_mbps",
@@ -174,5 +180,5 @@ class Profile:
             },
             "flash": {k: flash[k] for k in (
                 "image_version", "image_file", "manifest_file", "block_kib", "timeout_s", "provision") if k in flash},
-            "boot": {"enabled": self.stages_for_mode(mode)["boot"]},
+            "boot": {"enabled": stages["boot"]},
         }

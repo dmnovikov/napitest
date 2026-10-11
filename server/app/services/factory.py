@@ -23,7 +23,9 @@ log = logging.getLogger("napi.factory")
 
 ACTIVE_STATUSES = ("queued", "running", "awaiting_boot")
 FINAL_STATUSES = ("pass", "fail", "interrupted", "incomplete", "cancelled", "offline")
-BOOT_TIMEOUT_TEXTS = ("BOOT: no report", "BOOT: плата не появилась в сети")
+# [0] report, [1] network; остальные — прежние тексты в старых записях БД
+BOOT_TIMEOUT_TEXTS = ("BOOTCHECK: нет отчёта загрузки", "BOOTCHECK: плата не появилась в сети",
+                      "BOOT: no report", "BOOT: плата не появилась в сети")
 FINAL_STATUSES = ("pass", "fail", "interrupted", "cancelled", "offline", "incomplete")
 # Итог задания от агента может заменить эти статусы (например, после долгого офлайна).
 OVERRIDABLE_STATUSES = ("queued", "running", "offline")
@@ -845,7 +847,7 @@ class Factory:
                 if conn is not None:
                     await conn.send({"type": "cancel", "job_id": job["id"]})
             else:  # awaiting_boot
-                self._set_stage(job["id"], "boot", "skipped", detail="BOOT: остановлено оператором")
+                self._set_stage(job["id"], "boot", "skipped", detail="BOOTCHECK: остановлено оператором")
                 await self._finalize(job, "cancelled", detail="ожидание BOOT остановлено оператором")
             stopped.append(job["id"])
         self.audit(operator["username"], "stop", {"batch_id": batch_id, "devices": device_ids, "jobs": stopped})
@@ -938,16 +940,16 @@ class Factory:
         expected = job["image_version"] or loads(job["params_json"], {}).get("flash", {}).get("image_version")
         if expected and payload.get("image_version") and payload["image_version"] != expected:
             self._set_stage(job["id"], "boot", "fail", t,
-                            f"BOOT: образ {payload['image_version']}≠{expected}", measurements)
-            await self._finalize(job, "fail", detail="BOOT: версия образа не совпала")
+                            f"BOOTCHECK: образ {payload['image_version']}≠{expected}", measurements)
+            await self._finalize(job, "fail", detail="BOOTCHECK: версия образа не совпала")
         else:
             uptime = payload.get("uptime")
             detail = f"загрузка с SD-NAND, uptime {uptime:.0f} с" if isinstance(uptime, (int, float)) else "загрузка с SD-NAND"
             warnings = None
             if late:
                 minutes = (t - self.profile.boot_timeout_s) / 60 if t is not None else None
-                warnings = [f"BOOT: отчёт пришёл после таймаута (+{minutes:.0f} мин)" if minutes is not None
-                            else "BOOT: отчёт пришёл после таймаута"]
+                warnings = [f"BOOTCHECK: отчёт пришёл после таймаута (+{minutes:.0f} мин)" if minutes is not None
+                            else "BOOTCHECK: отчёт пришёл после таймаута"]
             self._set_stage(job["id"], "boot", "pass", t, detail, measurements, warnings=warnings)
             await self._finalize(job, "pass", detail="" if late else None)
 
@@ -979,8 +981,8 @@ class Factory:
         since = to_iso(datetime.now(timezone.utc) - timedelta(hours=2))
         for row in self.db.all(
                 "SELECT j.* FROM job j JOIN stage_result s ON s.job_id = j.id AND s.stage = 'boot'"
-                " WHERE j.status = 'fail' AND s.detail = ? AND j.finished_at >= ?",
-                (BOOT_TIMEOUT_TEXTS[1], since)):
+                " WHERE j.status = 'fail' AND s.detail IN (?, ?) AND j.finished_at >= ?",
+                (BOOT_TIMEOUT_TEXTS[1], BOOT_TIMEOUT_TEXTS[3], since)):
             late = self._boot_timed_out_job(row["device_id"])
             if late is not None and late["id"] == row["id"]:
                 jobs.append((late, True))
@@ -1041,8 +1043,8 @@ class Factory:
         warnings = None
         if late:
             over = (t - self.profile.boot_timeout_s) / 60 if t is not None else None
-            warnings = [f"BOOT: плата появилась в сети после таймаута (+{over:.0f} мин)" if over is not None
-                        else "BOOT: плата появилась в сети после таймаута"]
+            warnings = [f"BOOTCHECK: плата появилась в сети после таймаута (+{over:.0f} мин)" if over is not None
+                        else "BOOTCHECK: плата появилась в сети после таймаута"]
         self._set_stage(job["id"], "boot", "pass", t, f"загрузка с SD-NAND, в сети {ip}",
                         {"method": "network", "ip": ip, "mac": mac, "ssh_banner": banner}, warnings=warnings)
         await self._finalize(job, "pass", detail="" if late else None)

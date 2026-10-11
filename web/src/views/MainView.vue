@@ -21,6 +21,7 @@ const lastPicked = ref<number | null>(null)
 const fullPattern = ref(false)
 const fullMemtester = ref(false)
 const fullNet = ref(false)
+const skipBoot = ref(false)
 const busy = ref(false)
 const message = ref<{ text: string; error: boolean } | null>(null)
 
@@ -163,6 +164,7 @@ async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golde
       sdnand_pattern: (fullPattern.value ? 'full' : 'quick') as 'quick' | 'full',
       memtester: (fullMemtester.value ? 'full' : 'quick') as 'quick' | 'full',
       net: (fullNet.value ? 'full' : 'quick') as 'quick' | 'full',
+      boot: (skipBoot.value ? 'skip' : 'check') as 'check' | 'skip',
     },
   }
   try {
@@ -200,9 +202,12 @@ function launch(mode: Mode) {
     mode === 'flash_only'
       ? 'Тесты не выполняются. Внутренняя SD-NAND будет полностью перезаписана.'
       : 'После PASS всех тестов внутренняя SD-NAND будет полностью перезаписана.'
+  const boot = skipBoot.value
+    ? 'Загрузка с SD-NAND проверяться не будет.'
+    : 'BOOTCHECK: после прошивки выключите плату, выньте microSD и включите (ожидание до 10 мин).'
   ask({
     title: MODE_LABEL[mode],
-    message: `${shortageText()}Плат выбрано: ${ids.length}.\n${warn}\nПродолжить?`,
+    message: `${shortageText()}Плат выбрано: ${ids.length}.\n${warn}\n${boot}\nПродолжить?`,
     okText: 'Запустить',
     danger: true,
     run: () => startBatch(mode, ids),
@@ -322,6 +327,9 @@ function exportCsv() {
         </label>
         <label class="chk" title="Дополнительно TCP iperf3 по 10 с в каждую сторону: реальная пропускная способность. Без галочки: UDP 90 Мбит/с по 3 с — потери и ошибки порта.">
           <input v-model="fullNet" type="checkbox" /> Тотальная проверка сети (+30 с, нагружает сеть)
+        </label>
+        <label class="chk" title="Без BOOTCHECK плата получает итог сразу после прошивки: не нужно выключать её, вынимать microSD и ждать до 10 мин. Записанный образ всё равно сверяется контрольной суммой.">
+          <input v-model="skipBoot" type="checkbox" /> Не проверять загрузку с SD-NAND (BOOTCHECK)
         </label>
       </div>
       <div class="group expected">

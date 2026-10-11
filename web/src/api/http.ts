@@ -53,7 +53,7 @@ export const api = {
     device_ids: number[]
     confirm: boolean
     kind: 'production' | 'golden'
-    options?: { sdnand_pattern?: 'quick' | 'full'; memtester?: 'quick' | 'full'; net?: 'quick' | 'full'; allow_retest?: boolean }
+    options?: { sdnand_pattern?: 'quick' | 'full'; memtester?: 'quick' | 'full'; net?: 'quick' | 'full'; boot?: 'check' | 'skip'; allow_retest?: boolean }
   }) => request<unknown>('POST', '/batches', body),
   stop: (device_ids: number[]) => request<unknown>('POST', '/stop', { device_ids }),
   stopBatch: (id: number, device_ids: number[] = []) =>

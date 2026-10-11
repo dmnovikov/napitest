@@ -23,8 +23,11 @@ const prev = computed(() => (props.device.tile === 'ready' ? props.device.previo
 const shownJob = computed(() => (prev.value ? null : props.device.job))
 const prevLine = computed(() => (prev.value ? previousText(prev.value) : ''))
 const warns = computed(() => jobWarnings(shownJob.value))
-// Плата прошла всё: тесты, прошивку и загрузку с SD-NAND — толстая зелёная рамка
+// Тесты и прошивка пройдены — толстая зелёная рамка; ✓ — ещё и BOOTCHECK пройден
 const complete = computed(() => props.device.tile === 'pass' && props.device.job?.mode === 'test_flash')
+const bootChecked = computed(
+  () => props.device.tile === 'pass' && props.device.job?.stages?.boot?.state === 'pass',
+)
 const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
 const line = computed(() => {
   if (passWarn.value) return warns.value[0] ?? 'PASS, есть замечания'
@@ -42,7 +45,7 @@ const title = computed(() => {
     `№${d.display_no} ${d.serial ?? ''}`,
     `cpuid: ${d.cpuid ?? '—'}`,
     `IP: ${d.ip ?? '—'}`,
-    `Состояние: ${TILE_LABEL[d.tile] ?? d.tile}${complete.value ? ' — тесты, прошивка и загрузка пройдены' : ''}`,
+    `Состояние: ${TILE_LABEL[d.tile] ?? d.tile}${complete.value ? ' — тесты и прошивка пройдены' : ''}${bootChecked.value ? ', BOOTCHECK пройден' : ''}`,
   ].join('\n')
 })
 </script>
@@ -60,6 +63,7 @@ const title = computed(() => {
       <span v-if="device.tested_before" class="seen" title="Плата уже проверялась, есть в базе">↻</span>
       <span class="tag">{{ tileTag(device) }}</span>
       <span class="badges">
+        <span v-if="bootChecked" class="badge bootok" title="BOOTCHECK пройден: загрузка с SD-NAND проверена">✓</span>
         <span v-if="device.is_golden" class="badge golden" title="Golden sample">★</span>
         <span v-if="device.simulated" class="badge sim" title="Симулированный агент">SIM</span>
         <span v-if="device.tile === 'interrupted'" class="badge bang" title="Прервано">!</span>
@@ -166,6 +170,11 @@ const title = computed(() => {
 .badge.sim {
   background: #e3e6ea;
   color: #555;
+}
+.badge.bootok {
+  background: var(--green);
+  color: #fff;
+  font-size: 11px;
 }
 .badge.golden {
   color: #b8860b;

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { JobView } from '../api/types'
 import { STAGES } from '../api/types'
-import { STAGE_LABEL, STATE_LABEL, hasWarn, stageClass } from '../lib/format'
+import { computed } from 'vue'
+import { STAGE_LABEL, STAGE_LONG, STATE_LABEL, hasWarn, shownStages, stageClass } from '../lib/format'
 
 const props = defineProps<{ job: JobView | null; labels?: boolean }>()
+const shown = computed(() => shownStages(props.job))
 
 function stateOf(name: (typeof STAGES)[number]) {
   return props.job?.stages?.[name]?.state ?? 'pending'
@@ -12,7 +14,7 @@ function titleOf(name: (typeof STAGES)[number]) {
   const s = props.job?.stages?.[name]
   const st = s?.state ?? 'pending'
   const warns = s?.warnings?.length ? '\n⚠ ' + s.warnings.join('\n⚠ ') : s?.warn ? '\n⚠ есть замечания' : ''
-  return `${STAGE_LABEL[name]}: ${STATE_LABEL[st] ?? st}${s?.detail ? ' — ' + s.detail : ''}${warns}`
+  return `${STAGE_LONG[name]}: ${STATE_LABEL[st] ?? st}${s?.detail ? ' — ' + s.detail : ''}${warns}`
 }
 function warnOf(name: (typeof STAGES)[number]) {
   return hasWarn(props.job?.stages?.[name])
@@ -20,8 +22,8 @@ function warnOf(name: (typeof STAGES)[number]) {
 </script>
 
 <template>
-  <div class="stagebar">
-    <div v-for="name in STAGES" :key="name" class="seg-wrap" :title="titleOf(name)">
+  <div class="stagebar" :style="{ gridTemplateColumns: `repeat(${shown.length}, 1fr)` }">
+    <div v-for="name in shown" :key="name" class="seg-wrap" :title="titleOf(name)">
       <div class="seg" :class="stageClass(stateOf(name))">
         <span v-if="stateOf(name) === 'interrupted'" class="bang">!</span>
         <span v-if="warnOf(name)" class="warn-dot" />

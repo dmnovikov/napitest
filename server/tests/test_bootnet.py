@@ -93,10 +93,10 @@ def test_boot_network_timeout_then_late(tmp_path):
         a, jid = flashed(c)
         a.close()
         wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "fail")
-        assert boot_stage(c, jid)["detail"] == "BOOT: плата не появилась в сети"
+        assert boot_stage(c, jid)["detail"] == "BOOTCHECK: плата не появилась в сети"
         net.up = True
         wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass")
-        assert boot_stage(c, jid)["warnings"][0].startswith("BOOT: плата появилась в сети после таймаута")
+        assert boot_stage(c, jid)["warnings"][0].startswith("BOOTCHECK: плата появилась в сети после таймаута")
 
 
 def test_serial_is_cpuid(tmp_path):
@@ -110,4 +110,24 @@ def test_serial_is_cpuid(tmp_path):
             a.pass_stage(jid, s)
         a.event(jid, "job_finished", data={"result": "pass"})
         wait_for(lambda: c.get(f"/api/v1/devices/{a.ack['device_id']}").json()["device"]["serial"] == "CPU0001")
+        a.close()
+
+
+def test_boot_skip_option_no_wait(tmp_path):
+    app, net = make(tmp_path)
+    with TestClient(app) as c:
+        c.post("/api/v1/auth/login", json={"username": "admin", "password": "secret-pass"})
+        a = Agent(c)
+        r = c.post("/api/v1/batches", json={"mode": "flash_only", "device_ids": [a.ack["device_id"]],
+                                            "confirm": True, "options": {"boot": "skip"}})
+        assert r.status_code == 200, r.text
+        job = a.recv("job")
+        assert job["params"]["stages"]["boot"] is False and job["params"]["boot"]["enabled"] is False
+        jid = job["job_id"]
+        a.pass_stage(jid, "flash")
+        a.event(jid, "job_finished", data={"result": "pass"})
+        wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass")   # без ожидания BOOTCHECK
+        assert boot_stage(c, jid)["state"] == "skipped" and net.swept == 0
+        assert c.post("/api/v1/batches", json={"mode": "test_only", "device_ids": [a.ack["device_id"]],
+                                               "options": {"boot": "maybe"}}).status_code == 400
         a.close()
