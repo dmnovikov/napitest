@@ -79,6 +79,11 @@ describe('tile helpers', () => {
     const j = job({ stages: { ram: { state: 'pass' }, sdnand: { state: 'running', pct: 43 } } })
     expect(currentStageLine(j, 'busy')).toBe('SD-NAND 43 %')
   })
+  it('awaiting boot shows server instruction', () => {
+    const j = job({ status: 'awaiting_boot', stages: { boot: { state: 'running', detail: 'ждём загрузки с SD-NAND' } } })
+    expect(currentStageLine(j, 'awaiting_boot')).toBe('BOOT: ждём загрузки с SD-NAND')
+    expect(currentStageLine(job({ status: 'awaiting_boot' }), 'awaiting_boot')).toBe('BOOT: ожидание загрузки')
+  })
   it('timer counts from start', () => {
     const now = Date.parse('2026-10-10T12:02:14Z')
     expect(tileTimer(job(), now).text).toBe('02:14')

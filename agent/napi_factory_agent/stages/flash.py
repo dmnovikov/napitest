@@ -132,7 +132,7 @@ def run(ctx: StageCtx) -> StageResult:
         if rb_sha != man["image_sha256"]:
             return StageResult("fail", "FLASH_FAIL readback", meas)
 
-        # 7. provision: серийник, партия, дата, версия образа
+        # 7. provision: серийник от сервера (он же проверяет право на прошивку); запись — только tail-json
         ctx.progress(96, "provision")
         resp = ctx.request({"type": "serial_request", "job_id": ctx.job_id}, "serial", 60)
         if not resp:
@@ -155,8 +155,9 @@ def run(ctx: StageCtx) -> StageResult:
             if tgt.read_at(off, prov_size) != data:
                 return StageResult("fail", "FLASH: provision readback", meas)
             meas["provision_offset"] = off
-        else:
+        elif prov.get("method") not in (None, "none"):
             return StageResult("fail", f"FLASH: provision method {prov.get('method')!r} not implemented", meas)
+        # none: серийник (= ID чипа) только в базе сервера, образ на SD-NAND остаётся байт в байт
     except OSError as e:
         ctx.log(f"I/O error: {e}")
         return StageResult("fail", "FLASH: I/O error", meas)

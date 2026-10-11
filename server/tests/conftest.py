@@ -16,6 +16,9 @@ def make_settings(tmp_path, **overrides) -> Settings:
     # Профиль стенда, но с нормальными (не временными) слотами iperf3: тесты не зависят от правок на месте
     prof = yaml.safe_load((REPO_ROOT / "config" / "napi-c-rk3308.yaml").read_text())
     prof["net"]["max_parallel"] = 4
+    # Существующие тесты проверяют BOOT через отчёт и серийник-счётчик; сеть и cpuid — в test_bootnet.py
+    prof["boot"]["method"] = overrides.pop("boot_method", "report")
+    prof["serial"]["source"] = overrides.pop("serial_source", "counter")
     (tmp_path / "profile.yaml").write_text(yaml.safe_dump(prof, allow_unicode=True))
     s.profile_path = str(tmp_path / "profile.yaml")
     s.web_dist = str(tmp_path / "dist")

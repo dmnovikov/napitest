@@ -169,7 +169,8 @@ export function currentStageLine(job: JobView | null, tile: Tile): string {
     }
     return job.detail || 'не выполнено'
   }
-  if (job.status === 'awaiting_boot') return 'BOOT: ожидание отчёта'
+  // Текст ожидания BOOT задаёт сервер: что сделать оператору и что видно в сети
+  if (job.status === 'awaiting_boot') return st.boot?.detail ? `BOOT: ${st.boot.detail}` : 'BOOT: ожидание загрузки'
   for (const name of STAGES) {
     const s = st[name]
     if (s && s.state === 'running') return runningText(name, s)

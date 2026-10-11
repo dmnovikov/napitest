@@ -156,7 +156,20 @@
  "ok":true}
 ```
 
-## 2. Первая загрузка: `POST /api/v1/agent/boot_ok`
+## 2. Первая загрузка (этап BOOT)
+
+По умолчанию (`boot.method: network`) финальный образ пишется **без изменений**, и BOOT проверяется снаружи:
+пока задание в `awaiting_boot`, сервер раз в `probe_s` шлёт по UDP-пакету на каждый адрес подсети платы
+(чтобы заполнить ARP), ищет в `/proc/net/arp` IP с MAC платы (MAC NAPI-C выводится из cpuid и одинаков в
+тестовой и финальной ОС) и читает SSH-баннер на `probe_port`. Если SSH отвечает `confirm_s` секунд, а агент
+тестовой microSD не подключился, BOOT: pass (`measurements`: `method`, `ip`, `mac`, `ssh_banner`).
+Агент снова на связи после выключения: плата загрузилась с microSD, текст этапа просит вынуть карту.
+Таймаут: `BOOT: плата не появилась в сети`; появление в течение 2 ч после таймаута даёт PASS с замечанием.
+Серийник при `serial.source: cpuid` равен ID чипа (в ОС: `/proc/device-tree/serial-number`) и в плату не пишется.
+
+`boot.method: report` (прежняя схема) использует отчёт из образа:
+
+### 2.1 `POST /api/v1/agent/boot_ok`
 
 Шлёт `napi-firstboot-report` из финального образа. Заголовок `Authorization: Bearer <agent_token>`.
 

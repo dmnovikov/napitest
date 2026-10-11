@@ -15,12 +15,14 @@ from typing import Any
 
 from ..config import DESTRUCTIVE_MODES, MODES, STAGES, TEST_STAGES, Profile, Settings
 from ..db.database import Database, dumps, loads, now_iso, parse_iso, to_iso
+from ..scheduler.bootnet import BootNet, subnet_hosts
 from ..scheduler.net import Grant, NetScheduler
 from ..version import __version__
 
 log = logging.getLogger("napi.factory")
 
 ACTIVE_STATUSES = ("queued", "running", "awaiting_boot")
+BOOT_TIMEOUT_TEXTS = ("BOOT: no report", "BOOT: плата не появилась в сети")
 FINAL_STATUSES = ("pass", "fail", "interrupted", "cancelled", "offline", "incomplete")
 # Итог задания от агента может заменить эти статусы (например, после долгого офлайна).
 OVERRIDABLE_STATUSES = ("queued", "running", "offline")
@@ -81,6 +83,8 @@ class Factory:
         self.cancel_requested: set[str] = set()
         self.ui_clients: set[Any] = set()
         self.early_boot: dict[str, dict] = {}    # job_id -> отчёт первой загрузки, пришедший раньше итога FLASH
+        self.bootnet = BootNet(port=int(profile.section("boot").get("probe_port", 22)))
+        self.boot_state: dict[str, dict] = {}    # job_id -> состояние сетевой проверки BOOT
         self.dirty: set[int] = set()
         self.summary_dirty = False
         ports = [profile.iperf_base_port + i for i in range(profile.net_parallel)]
@@ -607,7 +611,7 @@ class Factory:
                 deadline = to_iso(datetime.now(timezone.utc) + timedelta(seconds=self.profile.boot_timeout_s))
                 self.db.execute("UPDATE job SET status = 'awaiting_boot', boot_deadline = ? WHERE id = ?",
                                 (deadline, job["id"]))
-                self._set_stage(job["id"], "boot", "running", detail="ожидание отчёта первой загрузки")
+                self._set_stage(job["id"], "boot", "running", detail=self._boot_wait_text())
                 self.mark(job["device_id"])
                 early = self.early_boot.pop(job["id"], None)
                 if early is not None:
@@ -629,6 +633,7 @@ class Factory:
         )
         self.cancel_requested.discard(job["id"])
         self.early_boot.pop(job["id"], None)
+        self.boot_state.pop(job["id"], None)
         if status == "pass" and job["mode"] == "test_only":
             self._assign_serial(job["device_id"], job["batch_id"])
         self._finish_batch_if_done(job["batch_id"])
@@ -640,8 +645,16 @@ class Factory:
         dev = self.db.one("SELECT serial FROM device WHERE id = ?", (device_id,))
         if dev["serial"]:
             return dev["serial"]
+        cfg = self.profile.section("serial")
+        if cfg.get("source") == "cpuid":
+            # Серийник = ID чипа (Rockchip serial# из OTP): его же видит ОС в /proc/device-tree/serial-number
+            row = self.db.one("SELECT cpuid FROM device WHERE id = ?", (device_id,))
+            serial = row["cpuid"]
+            self.db.execute("UPDATE device SET serial = ? WHERE id = ?", (serial, device_id))
+            self.audit(None, "serial_assigned", {"device_id": device_id, "serial": serial, "source": "cpuid"})
+            return serial
         n = self._meta_next("serial_counter")
-        fmt = self.profile.section("serial").get("format", "NC-{yy}{mm}-{n:04d}")
+        fmt = cfg.get("format", "NC-{yy}{mm}-{n:04d}")
         now = datetime.now(timezone.utc)
         serial = fmt.format(n=n, yy=now.strftime("%y"), mm=now.strftime("%m"), yyyy=now.strftime("%Y"),
                             batch=batch_id or 0)
@@ -887,7 +900,7 @@ class Factory:
             return None
         rows = self._stage_rows(job["id"])
         boot = rows.get("boot")
-        if boot is None or boot["state"] != "fail" or boot["detail"] != "BOOT: no report":
+        if boot is None or boot["state"] != "fail" or boot["detail"] not in BOOT_TIMEOUT_TEXTS:
             return None
         enabled = loads(job["params_json"], {}).get("stages", {})
         stages = {s: {"state": r["state"]} for s, r in rows.items()}
@@ -915,6 +928,103 @@ class Factory:
             self._set_stage(job["id"], "boot", "pass", t, detail, measurements, warnings=warnings)
             await self._finalize(job, "pass", detail="" if late else None)
 
+    # ------------------------------------------------------------------ BOOT по сети
+
+    @property
+    def boot_method(self) -> str:
+        return str(self.profile.section("boot").get("method", "report"))
+
+    def _boot_wait_text(self) -> str:
+        if self.boot_method == "network":
+            return "выключите плату, выньте microSD, включите"
+        return "ожидание отчёта первой загрузки"
+
+    def _boot_timeout_text(self) -> str:
+        return BOOT_TIMEOUT_TEXTS[1] if self.boot_method == "network" else BOOT_TIMEOUT_TEXTS[0]
+
+    def _boot_detail(self, job_id: str, state: dict, text: str) -> None:
+        if state.get("detail") != text:
+            state["detail"] = text
+            self._set_stage(job_id, "boot", "running", detail=text)
+            job = self._job(job_id)
+            if job:
+                self.mark(job["device_id"])
+
+    def _boot_candidates(self) -> list[tuple[Any, bool]]:
+        jobs = [(j, False) for j in self.db.all("SELECT * FROM job WHERE status = 'awaiting_boot'")]
+        # Поздняя загрузка: последнее задание платы упало только по таймауту BOOT за последние 2 ч
+        since = to_iso(datetime.now(timezone.utc) - timedelta(hours=2))
+        for row in self.db.all(
+                "SELECT j.* FROM job j JOIN stage_result s ON s.job_id = j.id AND s.stage = 'boot'"
+                " WHERE j.status = 'fail' AND s.detail = ? AND j.finished_at >= ?",
+                (BOOT_TIMEOUT_TEXTS[1], since)):
+            late = self._boot_timed_out_job(row["device_id"])
+            if late is not None and late["id"] == row["id"]:
+                jobs.append((late, True))
+        return jobs
+
+    async def boot_probe(self) -> None:
+        """Плата загрузилась с SD-NAND: её MAC в сети, отвечает SSH, агента тестовой microSD нет."""
+        cands = self._boot_candidates()
+        if not cands:
+            return
+        confirm_s = float(self.profile.section("boot").get("confirm_s", 45))
+        now = time.monotonic()
+        todo = []
+        hosts: set[str] = set()
+        for job, late in cands:
+            dev = self.db.one("SELECT id, mac, ip FROM device WHERE id = ?", (job["device_id"],))
+            st = self.boot_state.setdefault(job["id"], {"left": False, "up_since": None, "late": late})
+            if self.is_online(dev["id"]):
+                st["up_since"] = None
+                if not late:
+                    self._boot_detail(job["id"], st, "загрузилась с microSD: выньте карту и перезагрузите"
+                                      if st["left"] else self._boot_wait_text())
+                continue
+            st["left"] = True
+            if not dev["mac"]:
+                continue
+            todo.append((job, late, dev, st))
+            hosts.update(subnet_hosts(dev["ip"]))
+        if not todo:
+            return
+        await self.bootnet.sweep(sorted(hosts))
+        arp = self.bootnet.arp()
+        for job, late, dev, st in todo:
+            found = None
+            for ip in arp.get(dev["mac"].lower(), []):
+                banner = await self.bootnet.ssh_banner(ip)
+                if banner:
+                    found = (ip, banner)
+                    break
+            if self.is_online(dev["id"]):
+                continue
+            if found is None:
+                st["up_since"] = None
+                if not late:
+                    self._boot_detail(job["id"], st, "ждём загрузки с SD-NAND")
+                continue
+            if st["up_since"] is None or st.get("ip") != found[0]:
+                st["up_since"], st["ip"] = now, found[0]
+            if not late:
+                self._boot_detail(job["id"], st, f"в сети {found[0]}, проверка")
+            if now - st["up_since"] >= confirm_s:
+                await self._complete_boot_net(self._job(job["id"]), dev["mac"], found[0], found[1], late)
+
+    async def _complete_boot_net(self, job, mac: str, ip: str, banner: str, late: bool) -> None:
+        flash_row = self._stage_rows(job["id"]).get("flash")
+        flashed_at = parse_iso(flash_row["updated_at"]) if flash_row else None
+        t = int((datetime.now(timezone.utc) - flashed_at).total_seconds()) if flashed_at else None
+        warnings = None
+        if late:
+            over = (t - self.profile.boot_timeout_s) / 60 if t is not None else None
+            warnings = [f"BOOT: плата появилась в сети после таймаута (+{over:.0f} мин)" if over is not None
+                        else "BOOT: плата появилась в сети после таймаута"]
+        self._set_stage(job["id"], "boot", "pass", t, f"загрузка с SD-NAND, в сети {ip}",
+                        {"method": "network", "ip": ip, "mac": mac, "ssh_banner": banner}, warnings=warnings)
+        await self._finalize(job, "pass", detail="" if late else None)
+        self.audit(None, "boot_net", {"device_id": job["device_id"], "job_id": job["id"], "ip": ip, "late": late})
+
     # ------------------------------------------------------------------ таймеры
 
     async def tick(self) -> None:
@@ -927,8 +1037,9 @@ class Factory:
 
         for job in self.db.all("SELECT * FROM job WHERE status = 'awaiting_boot' AND boot_deadline < ?",
                                (to_iso(now),)):
-            self._set_stage(job["id"], "boot", "fail", self.profile.boot_timeout_s, "BOOT: no report")
-            await self._finalize(job, "fail", detail="BOOT: no report")
+            text = self._boot_timeout_text()
+            self._set_stage(job["id"], "boot", "fail", self.profile.boot_timeout_s, text)
+            await self._finalize(job, "fail", detail=text)
 
         limit = to_iso(now - timedelta(seconds=self.profile.job_timeout_s))
         for job in self.db.all(
@@ -1006,7 +1117,17 @@ class Factory:
                     log.exception("broadcast failed")
                 await asyncio.sleep(0.5)
 
+        async def boot_watcher():
+            while True:
+                try:
+                    await self.boot_probe()
+                except Exception:
+                    log.exception("boot probe failed")
+                await asyncio.sleep(float(self.profile.section("boot").get("probe_s", 3)))
+
         self._bg = [asyncio.create_task(ticker()), asyncio.create_task(broadcaster())]
+        if self.boot_method == "network":
+            self._bg.append(asyncio.create_task(boot_watcher()))
 
     async def stop_background(self) -> None:
         for task in self._bg:

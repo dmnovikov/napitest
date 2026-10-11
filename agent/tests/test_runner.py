@@ -312,3 +312,17 @@ def test_net_error_counters_grow_fails(agent_factory):
     a.backend.run_iperf = bad
     job = run(run_job(a, "test_only"))
     assert job["stages"]["net"]["detail"] == "NET: errors rx_crc_errors +7"
+
+
+def test_flash_provision_none_keeps_image_pristine(agent_factory, images):
+    a = agent_factory()
+    p = job_params("flash_only")
+    p["flash"]["provision"] = {"method": "none"}
+    job = run(run_job(a, "flash_only", params=p))
+    assert job["result"] == "pass", job
+    man = json.loads((images / "napi-c-armbian-2026.10.0.manifest.json").read_text())
+    with open(a.backend.root + "/dev/mmcblk0", "rb") as f:
+        f.seek(man["image_size"])
+        assert f.read(MiB).strip(b"\0") == b""      # за образом ничего не записано
+    fin = [e for e in a.queue.pending() if e["kind"] == "stage_finished" and e["stage"] == "flash"][0]
+    assert "provision_offset" not in fin["data"]["measurements"]

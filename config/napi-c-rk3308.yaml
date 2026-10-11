@@ -68,15 +68,23 @@ flash:
   block_kib: 4096
   timeout_s: 3600
   provision:
-    # file: JSON в последних 1 MiB области за концом образа (до расширения rootfs)
-    # VALIDATE: согласовать с финальным образом (U-Boot env или отдельный раздел)
-    method: tail-json
+    # none: образ пишется без изменений (байт в байт ваш релиз), в SD-NAND ничего не добавляется.
+    # tail-json: JSON с серийником за концом образа + napi-provision-import в образе (устарело)
+    method: none
     size_bytes: 1048576
   flash_only_requires_tested: true
 
 boot:
   enabled: true
   timeout_s: 600
+  # network: финальный образ не меняется; сервер находит плату в сети по MAC (из cpuid,
+  # одинаков в тестовой и финальной ОС) и проверяет SSH. report: отчёт napi-firstboot-report из образа
+  method: network
+  probe_port: 22               # SSH Armbian
+  confirm_s: 45                # SSH отвечает, а агент тестовой microSD не подключился: загрузка с SD-NAND
+  probe_s: 3
 
 serial:
-  format: "NC-{yy}{mm}-{n:04d}"
+  # cpuid: серийник = ID чипа (Rockchip serial# из OTP, в ОС: /proc/device-tree/serial-number)
+  source: cpuid
+  format: "NC-{yy}{mm}-{n:04d}"   # только для source: counter
