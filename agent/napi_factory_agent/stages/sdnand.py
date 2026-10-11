@@ -128,6 +128,9 @@ def run(ctx: StageCtx) -> StageResult:
     ctx.log(f"паттерн {pmode}: {len(ranges)} диап., {fmt_size(total)}, с {fmt_size(start_at)}")
 
     done = 0
+    # Периодический fsync: иначе запись уходит в кеш страниц, процент «убегает» вперёд
+    # и замирает на финальном sync (SD-NAND пишет ~8 МБ/с)
+    sync_every = int(p.get("sync_mib", 16)) * 1024 * 1024
     t0 = time.monotonic()
     try:
         tgt = be.open_target(inv)
@@ -135,6 +138,7 @@ def run(ctx: StageCtx) -> StageResult:
         ctx.log(f"open: {e}")
         return StageResult("fail", "SD: target mismatch", meas)
     try:
+        unsynced = 0
         for off, ln in ranges:
             pos = off
             while pos < off + ln:
@@ -143,6 +147,10 @@ def run(ctx: StageCtx) -> StageResult:
                 tgt.write_at(pos, pattern_block(seed, pos, n))
                 pos += n
                 done += n
+                unsynced += n
+                if sync_every and unsynced >= sync_every:
+                    tgt.sync()
+                    unsynced = 0
                 ctx.progress(100 * done / (2 * total), f"запись {100 * done // (2 * total)} %")
             tgt.sync()
         tgt.flush_cache()

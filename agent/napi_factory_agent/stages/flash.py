@@ -80,6 +80,8 @@ def run(ctx: StageCtx) -> StageResult:
         ctx.shared["flash_write_started"] = True
         h = hashlib.sha256()
         written = 0
+        unsynced = 0
+        sync_every = int(p.get("sync_mib", 16)) * 1024 * 1024   # честный процент записи, см. sdnand
         t0 = time.monotonic()
         with be.decompress(image_file) as src:
             while True:
@@ -93,6 +95,10 @@ def run(ctx: StageCtx) -> StageResult:
                 h.update(buf)
                 tgt.write_at(written, buf)
                 written += len(buf)
+                unsynced += len(buf)
+                if sync_every and unsynced >= sync_every:
+                    tgt.sync()
+                    unsynced = 0
                 ctx.progress(80 * written / image_size, f"запись {100 * written // image_size} %")
             src_ok = src.ok()
         stream_sha = h.hexdigest()
