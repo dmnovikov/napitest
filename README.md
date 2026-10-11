@@ -15,7 +15,7 @@
 
 ```sh
 # веб
-cd web && npm ci && npm run build && cd ..
+cd web && npm ci && npm run build && cd .. && scripts/deploy-web.sh   # сборка в web/dist-next, установка в web/dist
 
 # сервер
 cd server && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'

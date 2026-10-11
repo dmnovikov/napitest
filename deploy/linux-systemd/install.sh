@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Установка сервера копированием: каталог + venv + systemd-юнит. Запускать от root
-# из корня репозитория после сборки веба (cd web && npm ci && npm run build).
+# из корня репозитория после сборки и установки веба (cd web && npm ci && npm run build && cd .. && scripts/deploy-web.sh).
 set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DST=/opt/napi-factory-test
 
 [[ $EUID -eq 0 ]] || { echo "нужен root" >&2; exit 1; }
-[[ -f "$SRC/web/dist/index.html" ]] || { echo "веб не собран: cd web && npm ci && npm run build" >&2; exit 1; }
+[[ -f "$SRC/web/dist/index.html" ]] || { echo "веб не установлен: cd web && npm ci && npm run build && cd .. && scripts/deploy-web.sh" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "нужен python3 >= 3.11" >&2; exit 1; }
 command -v iperf3 >/dev/null || echo "предупреждение: iperf3 не установлен, NET-этап реальных плат не пройдёт"
 
