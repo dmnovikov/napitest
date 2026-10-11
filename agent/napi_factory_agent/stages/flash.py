@@ -135,10 +135,11 @@ def run(ctx: StageCtx) -> StageResult:
         # 7. provision: серийник от сервера (он же проверяет право на прошивку); запись — только tail-json
         ctx.progress(96, "provision")
         resp = ctx.request({"type": "serial_request", "job_id": ctx.job_id}, "serial", 60)
+        # Сервер не ответил или отказал: сбой стенда/порядка работы, не дефект платы — «не выполнено»
         if not resp:
-            return StageResult("fail", "FLASH: provision no serial", meas)
+            return StageResult("skipped", "FLASH: сервер не ответил (стенд)", {**meas, "blocked": True})
         if resp.get("error"):
-            return StageResult("fail", f"FLASH: provision {resp['error']}", meas)
+            return StageResult("skipped", f"FLASH: сервер отказал: {resp['error']}", {**meas, "blocked": True})
         record = {"serial": resp["serial"], "batch": resp.get("batch"),
                   "date": resp.get("date") or datetime.now(timezone.utc).date().isoformat(),
                   "image_version": man["version"], "cpuid": ctx.cpuid}

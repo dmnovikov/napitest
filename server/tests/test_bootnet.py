@@ -84,7 +84,14 @@ def test_boot_microsd_left_in(tmp_path):
         net.up = True
         wait_for(lambda: boot_stage(c, jid)["detail"] == "загрузилась с microSD: выньте карту и перезагрузите")
         assert c.get(f"/api/v1/jobs/{jid}").json()["status"] == "awaiting_boot"
-        b.close()
+        try:
+            c.app.state.core.db.execute("UPDATE job SET boot_deadline = '2000-01-01T00:00:00Z' WHERE id = ?",
+                                        (jid,))                    # время ожидания вышло
+            wait_for(lambda: boot_stage(c, jid)["state"] == "skipped")
+            assert boot_stage(c, jid)["detail"] == "BOOTCHECK: не подтверждена — плата загрузилась с microSD"
+            assert c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass"
+        finally:
+            b.close()
 
 
 def test_boot_network_timeout_then_late(tmp_path):
@@ -92,11 +99,12 @@ def test_boot_network_timeout_then_late(tmp_path):
     with TestClient(app) as c:
         a, jid = flashed(c)
         a.close()
-        wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "fail")
-        assert boot_stage(c, jid)["detail"] == "BOOTCHECK: плата не появилась в сети"
-        net.up = True
-        wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass")
-        assert boot_stage(c, jid)["warnings"][0].startswith("BOOTCHECK: плата появилась в сети после таймаута")
+        wait_for(lambda: boot_stage(c, jid)["state"] == "skipped")
+        assert c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass"
+        assert boot_stage(c, jid)["warnings"] == ["BOOTCHECK: загрузка не подтверждена"]
+        net.up = True                                     # плата всё же загрузилась с SD-NAND
+        wait_for(lambda: boot_stage(c, jid)["state"] == "pass")
+        assert boot_stage(c, jid)["warnings"] == []
 
 
 def test_serial_is_cpuid(tmp_path):

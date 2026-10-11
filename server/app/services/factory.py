@@ -23,9 +23,13 @@ log = logging.getLogger("napi.factory")
 
 ACTIVE_STATUSES = ("queued", "running", "awaiting_boot")
 FINAL_STATUSES = ("pass", "fail", "interrupted", "incomplete", "cancelled", "offline")
-# [0] report, [1] network; остальные — прежние тексты в старых записях БД
+# Прежние тексты таймаута BOOT (итог был FAIL) — в старых записях БД; пересчитываются при старте
 BOOT_TIMEOUT_TEXTS = ("BOOTCHECK: нет отчёта загрузки", "BOOTCHECK: плата не появилась в сети",
                       "BOOT: no report", "BOOT: плата не появилась в сети")
+# Загрузка не подтверждена за время ожидания: это не дефект (оператор мог не успеть) — PASS с замечанием
+BOOT_UNCONFIRMED = "BOOTCHECK: загрузка не подтверждена"
+BOOT_UNCONFIRMED_SD = "BOOTCHECK: не подтверждена — плата загрузилась с microSD"
+BOOT_UNCONFIRMED_TEXTS = (BOOT_UNCONFIRMED, BOOT_UNCONFIRMED_SD)
 FINAL_STATUSES = ("pass", "fail", "interrupted", "cancelled", "offline", "incomplete")
 # Итог задания от агента может заменить эти статусы (например, после долгого офлайна).
 OVERRIDABLE_STATUSES = ("queued", "running", "offline")
@@ -197,6 +201,9 @@ class Factory:
         if "boot" in rows:
             row = rows["boot"]
             stages["boot"] = {"state": row["state"], "t": row["t"], "detail": row["detail"]}
+            warnings = loads(row["warnings_json"])
+            if warnings:
+                stages["boot"]["warnings"] = warnings
         if job["status"] in FINAL_STATUSES:
             # Этап, до которого задание не дошло, показывается пропущенным, а не «ещё не запускался».
             for st in stages.values():
@@ -927,15 +934,39 @@ class Factory:
         self.audit(None, "boot_ok_early", {"device_id": dev["id"], "job_id": job["id"], **payload})
         return {"ok": True, "job_id": job["id"]}
 
+    def _clear_boot_warning(self, job_id: str) -> None:
+        """Поздняя загрузка подтверждена: замечание «не подтверждена» снимается."""
+        self.db.execute("UPDATE stage_result SET warnings_json = NULL WHERE job_id = ? AND stage = 'boot'", (job_id,))
+
+    def normalize_boot_timeouts(self) -> None:
+        """Старые записи, где таймаут BOOT давал FAIL при пройденных тестах и прошивке, — в PASS с замечанием."""
+        for job in self.db.all(
+                "SELECT j.* FROM job j JOIN stage_result s ON s.job_id = j.id AND s.stage = 'boot'"
+                f" WHERE j.status = 'fail' AND s.state = 'fail' AND s.detail IN ({', '.join('?' * len(BOOT_TIMEOUT_TEXTS))})",
+                BOOT_TIMEOUT_TEXTS):
+            rows = self._stage_rows(job["id"])
+            enabled = loads(job["params_json"], {}).get("stages", {})
+            if verdict(enabled, {s: {"state": r["state"]} for s, r in rows.items()}, include_boot=False) != "pass":
+                continue
+            self.db.execute("UPDATE stage_result SET state = 'skipped', detail = ?, warnings_json = ?"
+                            " WHERE job_id = ? AND stage = 'boot'", (BOOT_UNCONFIRMED, dumps([BOOT_UNCONFIRMED]), job["id"]))
+            self.db.execute("UPDATE job SET status = 'pass', result = 'pass', detail = NULL WHERE id = ?", (job["id"],))
+            self.audit(None, "boot_timeout_reclassified", {"job_id": job["id"], "device_id": job["device_id"]})
+
     def _boot_timed_out_job(self, device_id: int):
-        """Последнее задание платы, если оно упало только по таймауту BOOT (оператор не успел снять microSD)."""
+        """Последнее задание платы, если BOOTCHECK в нём не подтверждён за время ожидания
+        (оператор не успел снять microSD): PASS с замечанием, либо FAIL по таймауту в старых записях."""
         job = self.db.one("SELECT * FROM job WHERE device_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                           (device_id,))
-        if job is None or job["status"] != "fail":
+        if job is None or job["status"] not in ("pass", "fail"):
             return None
         rows = self._stage_rows(job["id"])
         boot = rows.get("boot")
-        if boot is None or boot["state"] != "fail" or boot["detail"] not in BOOT_TIMEOUT_TEXTS:
+        if boot is None:
+            return None
+        unconfirmed = job["status"] == "pass" and boot["state"] == "skipped" and boot["detail"] in BOOT_UNCONFIRMED_TEXTS
+        old_fail = job["status"] == "fail" and boot["state"] == "fail" and boot["detail"] in BOOT_TIMEOUT_TEXTS
+        if not (unconfirmed or old_fail):
             return None
         enabled = loads(job["params_json"], {}).get("stages", {})
         stages = {s: {"state": r["state"]} for s, r in rows.items()}
@@ -955,12 +986,9 @@ class Factory:
         else:
             uptime = payload.get("uptime")
             detail = f"загрузка с SD-NAND, uptime {uptime:.0f} с" if isinstance(uptime, (int, float)) else "загрузка с SD-NAND"
-            warnings = None
+            self._set_stage(job["id"], "boot", "pass", t, detail, measurements)
             if late:
-                minutes = (t - self.profile.boot_timeout_s) / 60 if t is not None else None
-                warnings = [f"BOOTCHECK: отчёт пришёл после таймаута (+{minutes:.0f} мин)" if minutes is not None
-                            else "BOOTCHECK: отчёт пришёл после таймаута"]
-            self._set_stage(job["id"], "boot", "pass", t, detail, measurements, warnings=warnings)
+                self._clear_boot_warning(job["id"])
             await self._finalize(job, "pass", detail="" if late else None)
 
     # ------------------------------------------------------------------ BOOT по сети
@@ -974,9 +1002,6 @@ class Factory:
             return "выключите плату, выньте microSD, включите"
         return "ожидание отчёта первой загрузки"
 
-    def _boot_timeout_text(self) -> str:
-        return BOOT_TIMEOUT_TEXTS[1] if self.boot_method == "network" else BOOT_TIMEOUT_TEXTS[0]
-
     def _boot_detail(self, job_id: str, state: dict, text: str) -> None:
         if state.get("detail") != text:
             state["detail"] = text
@@ -987,12 +1012,14 @@ class Factory:
 
     def _boot_candidates(self) -> list[tuple[Any, bool]]:
         jobs = [(j, False) for j in self.db.all("SELECT * FROM job WHERE status = 'awaiting_boot'")]
-        # Поздняя загрузка: последнее задание платы упало только по таймауту BOOT за последние 2 ч
+        # Поздняя загрузка: BOOTCHECK последнего задания платы не подтверждён за последние 2 ч
         since = to_iso(datetime.now(timezone.utc) - timedelta(hours=2))
+        texts = BOOT_UNCONFIRMED_TEXTS + BOOT_TIMEOUT_TEXTS
         for row in self.db.all(
                 "SELECT j.* FROM job j JOIN stage_result s ON s.job_id = j.id AND s.stage = 'boot'"
-                " WHERE j.status = 'fail' AND s.detail IN (?, ?) AND j.finished_at >= ?",
-                (BOOT_TIMEOUT_TEXTS[1], BOOT_TIMEOUT_TEXTS[3], since)):
+                f" WHERE j.status IN ('pass', 'fail') AND s.detail IN ({', '.join('?' * len(texts))})"
+                " AND j.finished_at >= ?",
+                (*texts, since)):
             late = self._boot_timed_out_job(row["device_id"])
             if late is not None and late["id"] == row["id"]:
                 jobs.append((late, True))
@@ -1050,13 +1077,10 @@ class Factory:
         flash_row = self._stage_rows(job["id"]).get("flash")
         flashed_at = parse_iso(flash_row["updated_at"]) if flash_row else None
         t = int((datetime.now(timezone.utc) - flashed_at).total_seconds()) if flashed_at else None
-        warnings = None
-        if late:
-            over = (t - self.profile.boot_timeout_s) / 60 if t is not None else None
-            warnings = [f"BOOTCHECK: плата появилась в сети после таймаута (+{over:.0f} мин)" if over is not None
-                        else "BOOTCHECK: плата появилась в сети после таймаута"]
         self._set_stage(job["id"], "boot", "pass", t, f"загрузка с SD-NAND, в сети {ip}",
-                        {"method": "network", "ip": ip, "mac": mac, "ssh_banner": banner}, warnings=warnings)
+                        {"method": "network", "ip": ip, "mac": mac, "ssh_banner": banner})
+        if late:
+            self._clear_boot_warning(job["id"])
         await self._finalize(job, "pass", detail="" if late else None)
         self.audit(None, "boot_net", {"device_id": job["device_id"], "job_id": job["id"], "ip": ip, "late": late})
 
@@ -1072,9 +1096,10 @@ class Factory:
 
         for job in self.db.all("SELECT * FROM job WHERE status = 'awaiting_boot' AND boot_deadline < ?",
                                (to_iso(now),)):
-            text = self._boot_timeout_text()
-            self._set_stage(job["id"], "boot", "fail", self.profile.boot_timeout_s, text)
-            await self._finalize(job, "fail", detail=text)
+            st = self.boot_state.get(job["id"]) or {}
+            text = BOOT_UNCONFIRMED_SD if st.get("left") and self.is_online(job["device_id"]) else BOOT_UNCONFIRMED
+            self._set_stage(job["id"], "boot", "skipped", self.profile.boot_timeout_s, text, warnings=[text])
+            await self._finalize(job, "pass")
 
         limit = to_iso(now - timedelta(seconds=self.profile.job_timeout_s))
         for job in self.db.all(

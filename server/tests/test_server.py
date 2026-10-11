@@ -182,18 +182,23 @@ def test_boot_timeout(tmp_path):
     with TestClient(app) as c:
         c.post("/api/v1/auth/login", json={"username": "admin", "password": "secret-pass"})
         a = Agent(c)
+        c.agents_to_close = [a]
         start(c, "flash_only", [a.ack["device_id"]])
         jid = a.recv("job")["job_id"]
         a.pass_stage(jid, "flash")
         a.event(jid, "job_finished", data={"result": "pass"})
-        d = wait_for(lambda: (x := device(c, "CPU0001"))["tile"] == "fail" and x, timeout=5)
-        assert d["job"]["stages"]["boot"]["detail"] == "BOOTCHECK: нет отчёта загрузки"
-        # отчёт пришёл позже (оператор не успел снять microSD): PASS с замечанием
+        # загрузка не подтверждена — не дефект: PASS с замечанием, CHECKB серый
+        d = wait_for(lambda: (x := device(c, "CPU0001"))["tile"] == "pass" and x, timeout=5)
+        b = d["job"]["stages"]["boot"]
+        assert b["state"] == "skipped" and b["detail"] == "BOOTCHECK: загрузка не подтверждена"
+        assert d["job"]["warnings_count"] == 1
+        assert c.get("/api/v1/state").json()["summary"]["fail"] == 0
+        # отчёт пришёл позже: BOOTCHECK пройден, замечание снято
         assert boot(c, "CPU0001")["job_id"] == jid
         j = c.get(f"/api/v1/jobs/{jid}").json()
         assert j["status"] == "pass" and j["detail"] is None
         b = {s["stage"]: s for s in j["stages"]}["boot"]
-        assert b["state"] == "pass" and b["warnings"][0].startswith("BOOTCHECK: отчёт пришёл после таймаута")
+        assert b["state"] == "pass" and b["warnings"] == []
         assert device(c, "CPU0001")["tile"] == "pass"
         # повторный отчёт уже ничего не меняет
         assert boot(c, "CPU0001")["job_id"] is None
@@ -539,3 +544,26 @@ def test_reconnected_tested_board_shows_previous(client):
     assert d["previous"]["status"] == "pass" and d["previous"]["mode"] == "test_only"
     assert d["previous"]["job_id"] == jid and d["previous"]["batch"]
     c.close()
+
+
+
+def test_old_boot_timeout_fail_reclassified(tmp_path):
+    app = create_app(make_settings(tmp_path))
+    with TestClient(app) as c:
+        c.post("/api/v1/auth/login", json={"username": "admin", "password": "secret-pass"})
+        a = Agent(c)
+        start(c, "flash_only", [a.ack["device_id"]])
+        jid = a.recv("job")["job_id"]
+        a.pass_stage(jid, "flash")
+        a.event(jid, "job_finished", data={"result": "pass"})
+        wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "awaiting_boot")
+        a.close()
+        db = c.app.state.core.db          # запись как при прежнем правиле: таймаут BOOT = FAIL
+        db.execute("UPDATE stage_result SET state = 'fail', detail = 'BOOT: no report' WHERE job_id = ? AND stage = 'boot'", (jid,))
+        db.execute("UPDATE job SET status = 'fail', result = 'fail', detail = 'BOOT: no report' WHERE id = ?", (jid,))
+    with TestClient(create_app(make_settings(tmp_path))) as c:      # перезапуск сервера
+        c.post("/api/v1/auth/login", json={"username": "admin", "password": "secret-pass"})
+        j = c.get(f"/api/v1/jobs/{jid}").json()
+        assert j["status"] == "pass" and j["detail"] is None
+        b = {s["stage"]: s for s in j["stages"]}["boot"]
+        assert b["state"] == "skipped" and b["warnings"] == ["BOOTCHECK: загрузка не подтверждена"]

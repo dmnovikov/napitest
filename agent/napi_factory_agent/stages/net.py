@@ -75,7 +75,8 @@ def run(ctx: StageCtx) -> StageResult:
     grant = ctx.request({"type": "net_request", "job_id": ctx.job_id}, "net_grant",
                         float(p.get("grant_timeout_s", 600)))
     if not grant:
-        return StageResult("fail", "NET: no iperf3 slot", meas)
+        # Сервер не дал очередь на сетевой тест: сбой стенда, а не дефект платы — «не выполнено»
+        return StageResult("skipped", "NET: нет очереди на сетевой тест (стенд)", {**meas, "blocked": True})
     host, port = grant.get("host") or (ctx.server_addr or ("", 0))[0], int(grant["port"])
     full = p.get("method", "udp") == "tcp"
     warnings: list[str] = []

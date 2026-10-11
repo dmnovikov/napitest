@@ -252,8 +252,10 @@ export function previousText(p: PreviousResult): string {
   return `уже проверялась: ${res}${warn}${why} · ${formatShort(p.finished_at)} · ${MODE_LABEL[p.mode] ?? p.mode}`
 }
 
-/** Этапы, которые рисуются на полоске: BOOTCHECK — только если он входит в задание. */
+/** Этапы, которые рисуются на полоске: BOOTCHECK — только если он входит в задание
+ * (в том числе серым, когда загрузка не подтверждена — у такого этапа есть замечание). */
 export function shownStages(job: JobView | null): StageName[] {
-  const boot = job?.stages?.boot?.state
-  return STAGES.filter((n) => n !== 'boot' || (boot !== undefined && boot !== 'skipped'))
+  const boot = job?.stages?.boot
+  const show = boot !== undefined && (boot.state !== 'skipped' || hasWarn(boot))
+  return STAGES.filter((n) => n !== 'boot' || show)
 }

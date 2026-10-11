@@ -99,8 +99,10 @@ def test_flash_source_vs_readback(agent_factory, kind, detail):
 def test_flash_serial_refused(agent_factory):
     a = agent_factory(serial_error="device has no TEST_PASS")
     job = run(run_job(a, "flash_only"))
-    assert job["result"] == "fail"
-    assert "provision" in job["stages"]["flash"]["detail"]
+    # отказ сервера — не дефект платы: серое «не выполнено», а не FAIL
+    assert job["result"] == "incomplete"
+    assert job["stages"]["flash"]["state"] == "skipped" and job["stages"]["flash"]["blocked"] is True
+    assert job["stages"]["flash"]["detail"] == "FLASH: сервер отказал: device has no TEST_PASS"
 
 
 def test_destructive_disabled_on_real_guard(agent_factory):
@@ -218,7 +220,8 @@ def test_net_no_grant_fails(agent_factory):
     p = job_params("test_only")
     p["net"]["grant_timeout_s"] = 1
     job = run(run_job(a, "test_only", params=p))
-    assert job["stages"]["net"]["detail"] == "NET: no iperf3 slot"
+    assert job["stages"]["net"]["detail"] == "NET: нет очереди на сетевой тест (стенд)"
+    assert job["stages"]["net"]["state"] == "skipped" and job["result"] == "incomplete"
 
 
 def test_compute_result_modes():

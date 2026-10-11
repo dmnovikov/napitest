@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   currentStageLine,
   previousText,
+  shownStages,
   formatDuration,
   formatBytes,
   hasWarn,
@@ -91,6 +92,13 @@ describe('tile helpers', () => {
     expect(previousText({ ...p, status: 'fail', detail: 'NET: tx 41' })).toBe(
       'уже проверялась: FAIL (NET: tx 41) · 11.10 14:32 · Тесты + прошивка',
     )
+  })
+  it('CHECKB shown only when part of the job', () => {
+    expect(shownStages(null)).not.toContain('boot')
+    expect(shownStages(job({ stages: { boot: { state: 'skipped' } } }))).not.toContain('boot')
+    expect(shownStages(job({ stages: { boot: { state: 'pending' } } }))).toContain('boot')
+    const unconfirmed = { state: 'skipped' as const, warnings: ['BOOTCHECK: загрузка не подтверждена'] }
+    expect(shownStages(job({ stages: { boot: unconfirmed } }))).toContain('boot')
   })
   it('timer counts from start', () => {
     const now = Date.parse('2026-10-10T12:02:14Z')
