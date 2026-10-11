@@ -131,3 +131,19 @@ def test_boot_skip_option_no_wait(tmp_path):
         assert c.post("/api/v1/batches", json={"mode": "test_only", "device_ids": [a.ack["device_id"]],
                                                "options": {"boot": "maybe"}}).status_code == 400
         a.close()
+
+
+def test_old_counter_serial_becomes_cpuid(tmp_path):
+    settings = make_settings(tmp_path, serial_source="counter")
+    app = create_app(settings)
+    with TestClient(app) as c:
+        a = Agent(c)
+        c.app.state.core.db.execute("UPDATE device SET serial = 'NC-2610-0001'")
+        a.close()
+    settings2 = make_settings(tmp_path, serial_source="cpuid")    # та же база, новая схема
+    with TestClient(create_app(settings2)) as c:
+        c.post("/api/v1/auth/login", json={"username": "admin", "password": "secret-pass"})
+        d = c.get("/api/v1/devices/1").json()["device"]
+        assert d["serial"] == "CPU0001"
+        log = c.get("/api/v1/audit").json()
+        assert any(x["action"] == "serial_reassigned" and x["detail"]["old"] == "NC-2610-0001" for x in log)

@@ -666,11 +666,21 @@ class Factory:
 
     # ------------------------------------------------------------------ серийники
 
+    def normalize_serials(self) -> None:
+        """serial.source: cpuid — серийник любой платы равен ID чипа, в том числе выданный раньше
+        по другой схеме (NC-…). Выполняется при старте сервера."""
+        if self.profile.section("serial").get("source") != "cpuid":
+            return
+        rows = self.db.all("SELECT id, serial, cpuid FROM device WHERE serial IS NOT NULL AND serial != cpuid")
+        for r in rows:
+            self.db.execute("UPDATE device SET serial = ? WHERE id = ?", (r["cpuid"], r["id"]))
+            self.audit(None, "serial_reassigned", {"device_id": r["id"], "old": r["serial"], "serial": r["cpuid"]})
+
     def _assign_serial(self, device_id: int, batch_id: int | None) -> str:
-        dev = self.db.one("SELECT serial FROM device WHERE id = ?", (device_id,))
-        if dev["serial"]:
-            return dev["serial"]
+        dev = self.db.one("SELECT serial, cpuid FROM device WHERE id = ?", (device_id,))
         cfg = self.profile.section("serial")
+        if dev["serial"] and (cfg.get("source") != "cpuid" or dev["serial"] == dev["cpuid"]):
+            return dev["serial"]
         if cfg.get("source") == "cpuid":
             # Серийник = ID чипа (Rockchip serial# из OTP): его же видит ОС в /proc/device-tree/serial-number
             row = self.db.one("SELECT cpuid FROM device WHERE id = ?", (device_id,))

@@ -42,6 +42,7 @@ def build_core(settings: Settings) -> Core:
     auth = AuthService(db, settings.session_hours)
     auth.ensure_operator(settings.admin_user, settings.admin_password)
     factory = Factory(settings, profile, db)
+    factory.normalize_serials()
     return Core(settings, profile, db, auth, factory, Reports(factory))
 
 
