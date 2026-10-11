@@ -1,0 +1,19 @@
+# Опционально. Основной способ развёртывания — deploy/linux-systemd/install.sh.
+services:
+  server:
+    image: python:3.11-slim
+    working_dir: /app/server
+    command: sh -c "pip install --quiet . && apt-get update -qq && apt-get install -y -qq iperf3 && python -m app.main"
+    env_file: ../config/server.example.env
+    environment:
+      NAPI_PROFILE: /app/config/napi-c-rk3308.yaml
+      NAPI_WEB_DIST: /app/web/dist
+    volumes:
+      - ../server:/app/server
+      - ../config:/app/config:ro
+      - ../web/dist:/app/web/dist:ro
+      - napi-data:/var/lib/napi-factory
+    network_mode: host
+    restart: unless-stopped
+volumes:
+  napi-data:

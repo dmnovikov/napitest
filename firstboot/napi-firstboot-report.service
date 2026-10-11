@@ -1,0 +1,15 @@
+[Unit]
+Description=NAPI Factory Test: отчёт первой загрузки с SD-NAND
+Wants=network-online.target
+After=network-online.target napi-provision-import.service
+ConditionPathExists=/etc/napi-factory/firstboot.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/napi-factory/napi-firstboot-report.py --config /etc/napi-factory/firstboot.conf
+# Ретраи внутри скрипта; после подтверждения сервером юнит отключает себя
+TimeoutStartSec=900
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

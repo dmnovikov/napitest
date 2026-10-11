@@ -1,0 +1,14 @@
+[Unit]
+Description=NAPI Factory Test: перенос provision-записи до расширения rootfs
+After=local-fs.target
+Before=armbian-resize-filesystem.service napi-firstboot-report.service
+ConditionPathExists=!/etc/napi-factory/provision.json
+ConditionPathExists=/etc/napi-factory/firstboot.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/napi-factory/napi-provision-import.py --config /etc/napi-factory/firstboot.conf
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

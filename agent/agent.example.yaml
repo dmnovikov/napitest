@@ -1,0 +1,23 @@
+# /etc/napi-factory/agent.yaml на тестовой microSD
+server_url: ""                                 # пусто: сервер ищется сам (UDP-запрос в сеть, затем mDNS)
+discovery_port: 18089                         # NAPI_DISCOVERY_PORT на сервере; 0: не искать
+token: CHANGE-ME                              # общий токен агентов (NAPI_AGENT_TOKEN на сервере)
+mdns: true
+state_dir: /var/lib/napi-factory              # записываемый раздел microSD: state.json, queue/
+queue_max_bytes: 33554432
+factory_dir: /opt/napi-factory                # images/, agent/, VERSION
+heartbeat_s: 3
+# led: "led-name"                             # VALIDATE ON NAPI-C: имя LED в /sys/class/leds для «Идентифицировать»
+identity:
+  nvmem_path: /sys/bus/nvmem/devices/rockchip-otp0/nvmem
+  otp_offset: 7                               # CHECKED на NAPI-C: cpuid в rockchip-otp0, 16 байт
+  otp_length: 16
+  known_clone_macs: []
+net:
+  iface: end0                                 # VALIDATE ON NAPI-C
+detect:                                       # только для inventory в hello; при задании правила из профиля сервера
+  expected_controller: ff490000.mmc           # VALIDATE ON NAPI-C
+  require_controller_match: true
+  size_min_bytes: 3500000000
+  size_max_bytes: 4400000000
+  allowed_types: [MMC, SD]

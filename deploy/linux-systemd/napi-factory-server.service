@@ -1,0 +1,23 @@
+[Unit]
+Description=NAPI Factory Test server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/napi-factory/server.env
+WorkingDirectory=/opt/napi-factory-test/server
+ExecStart=/opt/napi-factory-test/server/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=3
+User=napi-factory
+Group=napi-factory
+StateDirectory=napi-factory
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/napi-factory
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,206 @@
+:root {
+  --bg: #f3f4f6;
+  --card: #ffffff;
+  --line: #dfe2e6;
+  --text: #1d232b;
+  --muted: #6b7280;
+  --blue: #2f6fde;
+  --yellow: #f0b400;
+  --green: #1f9d4c;
+  --red: #d93030;
+  --orange: #e8771e;
+  --select: #6aa0ff;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+  --mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+}
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+h2 {
+  font-size: 20px;
+  margin: 4px 0 12px;
+}
+button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #c9cdd3;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: #f0f2f5;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+button.primary:hover:not(:disabled) {
+  background: #2459b8;
+}
+button.warn {
+  background: #fff6db;
+  border-color: #e3bf4f;
+}
+button.warn:hover:not(:disabled) {
+  background: #ffeeb8;
+}
+button.danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+button.danger:hover:not(:disabled) {
+  background: #b82525;
+}
+button.link {
+  border: none;
+  background: none;
+  color: var(--blue);
+  padding: 4px 6px;
+}
+.mono {
+  font-family: var(--mono);
+}
+.muted {
+  color: var(--muted);
+}
+.err {
+  color: var(--red);
+  margin: 6px 0;
+}
+.pass {
+  color: var(--green);
+  font-weight: 600;
+}
+.fail {
+  color: var(--red);
+  font-weight: 600;
+}
+.crumbs {
+  margin-bottom: 6px;
+}
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.tbl th,
+.tbl td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.tbl th {
+  background: #f7f8fa;
+  font-weight: 600;
+}
+.app {
+  min-height: 100vh;
+}
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 18px;
+  background: #1d2733;
+  color: #e5e9ef;
+}
+.nav a {
+  color: #c4cdd8;
+}
+.nav a.active {
+  color: #fff;
+  font-weight: 600;
+}
+.nav .brand {
+  font-weight: 700;
+  margin-right: 10px;
+}
+.nav .spacer {
+  flex: 1;
+}
+.nav .user {
+  font-size: 13px;
+}
+.nav button.link {
+  color: #9cc0ff;
+}
+.conn {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.conn .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #888;
+}
+.conn.on .dot {
+  background: #3ccf6e;
+}
+.conn.off {
+  color: #ffb3b3;
+}
+.conn.off .dot {
+  background: #e05050;
+}
+.content {
+  padding: 14px 18px;
+}
+
+/* Телефон: шапка в две строки, ничего не вылезает вправо */
+@media (max-width: 700px) {
+  body {
+    overflow-x: hidden;
+  }
+  .nav {
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding: 8px 12px;
+  }
+  .nav .brand {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+  .nav .spacer {
+    display: none;
+  }
+  .conn {
+    margin-left: auto;
+  }
+  .content {
+    padding: 10px 12px;
+  }
+  .tbl {
+    display: block;
+    overflow-x: auto;
+  }
+}

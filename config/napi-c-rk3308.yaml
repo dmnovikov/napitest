@@ -1,0 +1,82 @@
+# Профиль платы NAPI-C (Rockchip RK3308).
+# Значения, помеченные VALIDATE, не проверены на реальной плате.
+# CHECKED 2026-10-10: проверено на NAPI-C (Armbian 26.11 noble, ядро 6.18.55-current-rockchip64),
+# cpuid 9e098bbcae8b6599, read-only, плюс прогон «Только тесты».
+# Пока hardware_validated: false, реальный агент не выполняет разрушающие операции
+# (паттерн-тест SD-NAND и прошивку), даже если оператор их запустил.
+name: napi-c-rk3308
+hardware_validated: true   # 2026-10-10: распознавание SD-NAND проверено на плате 9e098bbcae8b6599, запись разрешена владельцем
+
+timeouts:
+  heartbeat_offline_s: 10      # нет heartbeat дольше: плата «нет связи»
+  job_s: 7200                  # задание без связи дольше: итог offline
+
+ram:
+  expected_mib: 512            # CHECKED: MemTotal 470 MiB (481024 kB), в допуске
+  tolerance_mib: 64
+  memtest_required: true       # CHECKED: CONFIG_MEMTEST=y, memtest=4 в extraargs; dmesg «early_memtest: # of tests: 4»
+  memtest_passes: 4            # значение для memtest=N, используется при сборке тестовой microSD
+  memtester_reserve_mib: 160
+  memtester_max_mib: 256        # «полный» memtester (опция запуска memtester: full)
+  memtester_quick_mib: 64       # «быстрый», по умолчанию: полное покрытие даёт kernel memtest
+  memtester_default: quick
+  memtester_passes: 1          # CHECKED: 216 MiB x1 = 530 с на RK3308
+  memtester_s_per_mib: 2.45    # оценка прогресса memtester (530 с / 216 MiB)
+  timeout_s: 900
+
+net:
+  iface: end0                  # CHECKED: end0, rk_gmac-dwmac, 100Full
+  expect_speed: 100
+  expect_duplex: full
+  # Основной тест: UDP-поток фиксированной скорости udp_seconds в каждую сторону (канал занят ~7 с)
+  udp_seconds: 3
+  udp_rate_mbps: 90
+  udp_max_loss_tx_pct: 0.5     # NAPI-C 2026-10-11: отправка 0.02–0.06 %
+  udp_max_loss_rx_pct: 2.0     # NAPI-C 2026-10-11: приём 0.5–0.9 % при любой скорости 70–90 (особенность приёма GMAC)
+  udp_retry: true              # не прошло направление — один повтор; успех с повтора = PASS с замечанием
+  # «Тотальная проверка сети» (опция запуска net: full): ещё TCP iperf3 в обе стороны
+  iperf_seconds: 10
+  # ВРЕМЕННО 2026-10-11: сервер на линке 100 Мбит/с (партнёр не предлагает 1000), замеры TCP tx 75–81.
+  # Вернуть 80 и max_parallel 4, когда сервер будет на гигабите.
+  min_mbps: 60
+  max_parallel: 1              # одновременных iperf3-сессий на сервере (ВРЕМЕННО 1, норма 4)
+  iperf_base_port: 5201
+  grant_timeout_s: 600
+  timeout_s: 900
+  max_rx_errors: 0
+  max_tx_errors: 0
+
+sdnand:
+  pattern_test_only: quick     # quick | full (режим «Только тесты»)
+  quick_ranges: 3
+  range_mib: 64
+  block_kib: 1024
+  timeout_s: 3600
+  detect:
+    # CHECKED: SD-NAND mmcblk0 на ff490000.mmc, type SD, name Zetta, 3904897024 байт;
+    # microSD на ff480000.mmc. Распознавание агентом на плате: ok, target mmcblk0.
+    expected_controller: ff490000.mmc
+    require_controller_match: true
+    size_min_bytes: 3500000000   # «около 4 GB» с учётом GB/GiB
+    size_max_bytes: 4400000000
+    allowed_types: [MMC, SD]
+
+flash:
+  image_version: "2026.09"         # ArmbianNapi_2026.09_Napi-c_resolute_current_6.18.54 + firstboot
+  image_file: napi-c-armbian-2026.09.img.zst
+  manifest_file: napi-c-armbian-2026.09.manifest.json
+  block_kib: 4096
+  timeout_s: 3600
+  provision:
+    # file: JSON в последних 1 MiB области за концом образа (до расширения rootfs)
+    # VALIDATE: согласовать с финальным образом (U-Boot env или отдельный раздел)
+    method: tail-json
+    size_bytes: 1048576
+  flash_only_requires_tested: true
+
+boot:
+  enabled: true
+  timeout_s: 600
+
+serial:
+  format: "NC-{yy}{mm}-{n:04d}"

@@ -1,0 +1,18 @@
+[Unit]
+Description=NAPI Factory Test agent
+Wants=network-online.target
+After=network-online.target local-fs.target
+
+[Service]
+Type=simple
+# Агент копируется на тестовую microSD в /opt/napi-factory/agent (scripts/build-test-sd.sh)
+Environment=PYTHONPATH=/opt/napi-factory/agent
+ExecStart=/usr/bin/python3 -m napi_factory_agent --config /etc/napi-factory/agent.yaml --backend real
+Restart=always
+RestartSec=3
+User=root
+# Разрушающие операции требуют root; шелл-команды с сервера агент не принимает
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

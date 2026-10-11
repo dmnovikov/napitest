@@ -1,0 +1,28 @@
+[project]
+name = "napi-factory-agent"
+version = "0.1.0"
+description = "NAPI Factory Test: агент на тестовой Armbian (NAPI-C, RK3308)"
+requires-python = ">=3.11"
+dependencies = [
+  "websockets==13.1",
+  "PyYAML==6.0.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.3"]
+
+[project.scripts]
+napi-factory-agent = "napi_factory_agent.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["napi_factory_agent*"]
+
+[tool.setuptools.package-data]
+napi_factory_agent = ["systemd/*.service"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

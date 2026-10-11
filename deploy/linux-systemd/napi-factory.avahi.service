@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- /etc/avahi/services/napi-factory.service: fallback-обнаружение сервера агентами -->
+<service-group>
+  <name>NAPI Factory Test</name>
+  <service>
+    <type>_napi-factory._tcp</type>
+    <port>8080</port>
+    <txt-record>path=/ws/agent</txt-record>
+  </service>
+</service-group>

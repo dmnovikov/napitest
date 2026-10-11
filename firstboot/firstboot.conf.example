@@ -1,0 +1,11 @@
+# /etc/napi-factory/firstboot.conf в финальном образе (key=value)
+# пусто: сервер ищется широковещательным UDP-запросом в локальной сети
+server=
+discovery_port=18089
+token=CHANGE-ME
+image_version=2026.10.0
+# cpuid в OTP (проверено на NAPI-C), как в agent.yaml
+otp_offset=7
+otp_length=16
+retry_s=10
+max_attempts=60

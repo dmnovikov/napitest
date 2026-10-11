@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: napi-factory-server
+Version: 0.1.0
+Summary: NAPI Factory Test: сервер производственного тестирования и прошивки NAPI-C
+Requires-Python: >=3.11
+Requires-Dist: fastapi==0.143.0
+Requires-Dist: starlette==1.7.0
+Requires-Dist: pydantic==2.14.0
+Requires-Dist: uvicorn[standard]==0.54.0
+Requires-Dist: websockets==17.2
+Requires-Dist: pyyaml==6.0.3
+Requires-Dist: segno==1.6.6
+Provides-Extra: dev
+Requires-Dist: pytest==9.1.1; extra == "dev"
+Requires-Dist: httpx==0.28.1; extra == "dev"
