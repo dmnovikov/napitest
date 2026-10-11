@@ -55,6 +55,8 @@ export interface DeviceView {
   simulated: boolean
   is_golden: boolean
   tested_before?: boolean
+  /** Итог прошлой проверки, если плату перезагрузили после него: квадрат «готова», но уже проверялась. */
+  previous?: PreviousResult | null
   tile: Tile
   job: JobView | null
 }
@@ -189,4 +191,14 @@ export interface RetestItem {
   last_batch: string | null
   last_date: string | null
   runs: number
+}
+
+export interface PreviousResult {
+  job_id: string
+  status: string
+  mode: Mode
+  finished_at: string | null
+  batch: string | null
+  detail: string | null
+  warnings_count?: number
 }

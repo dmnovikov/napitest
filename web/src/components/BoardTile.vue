@@ -3,23 +3,37 @@ import { computed } from 'vue'
 import type { DeviceView } from '../api/types'
 import StageBar from './StageBar.vue'
 import { now } from '../lib/clock'
-import { TILE_LABEL, currentStageLine, formatAgo, jobHasWarn, jobWarnings, tileClass, tileTag, tileTimer } from '../lib/format'
+import {
+  TILE_LABEL,
+  currentStageLine,
+  formatAgo,
+  jobHasWarn,
+  jobWarnings,
+  previousText,
+  tileClass,
+  tileTag,
+  tileTimer,
+} from '../lib/format'
 
 const props = defineProps<{ device: DeviceView; selected: boolean }>()
 defineEmits<{ (e: 'pick', ev: MouseEvent): void; (e: 'open'): void }>()
 
-const warns = computed(() => jobWarnings(props.device.job))
+// Плату перезагрузили после прошлой проверки: квадрат «готова», старый итог — только пометкой
+const prev = computed(() => (props.device.tile === 'ready' ? props.device.previous ?? null : null))
+const shownJob = computed(() => (prev.value ? null : props.device.job))
+const prevLine = computed(() => (prev.value ? previousText(prev.value) : ''))
+const warns = computed(() => jobWarnings(shownJob.value))
 // Плата прошла всё: тесты, прошивку и загрузку с SD-NAND — толстая зелёная рамка
 const complete = computed(() => props.device.tile === 'pass' && props.device.job?.mode === 'test_flash')
-const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(props.device.job))
+const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
 const line = computed(() => {
   if (passWarn.value) return warns.value[0] ?? 'PASS, есть замечания'
-  return currentStageLine(props.device.job, props.device.tile)
+  return currentStageLine(shownJob.value, props.device.tile)
 })
 const lineTitle = computed(() => (passWarn.value ? warns.value.join('\n') || 'есть замечания' : line.value))
-const timer = computed(() => tileTimer(props.device.job, now.value))
+const timer = computed(() => tileTimer(shownJob.value, now.value))
 const failLine = computed(() => {
-  const st = props.device.job?.stages ?? {}
+  const st = shownJob.value?.stages ?? {}
   return Object.values(st).some((s) => s && (s.state === 'fail' || s.state === 'error'))
 })
 const title = computed(() => {
@@ -52,7 +66,8 @@ const title = computed(() => {
         <span v-if="device.tile === 'incomplete'" class="badge bang" title="Не выполнено: тест запрещён, это не дефект платы">—</span>
       </span>
     </div>
-    <StageBar :job="device.job" labels />
+    <StageBar :job="shownJob" labels />
+    <div v-if="prev" class="prev" :class="'prev-' + prev.status" :title="prevLine">{{ prevLine }}</div>
     <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn }" :title="lineTitle">
       <span v-if="passWarn" class="warn-ico">⚠</span>{{ line }}
     </div>
@@ -159,6 +174,24 @@ const title = computed(() => {
 .badge.bang {
   background: #8a8f98;
   color: #fff;
+}
+.prev {
+  font-size: 11.5px;
+  line-height: 1.3;
+  background: #fff3cd;
+  border: 1px solid #f0d27a;
+  color: #6b4e00;
+  border-radius: 4px;
+  padding: 2px 5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.prev-fail {
+  background: #fde8e8;
+  border-color: #f2b8b8;
+  color: #9b1c1c;
 }
 .line {
   font-size: 12px;

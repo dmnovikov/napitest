@@ -177,6 +177,7 @@ class Agent:
             "test_sd_version": read_text(self.cfg.version_file, "unknown"), "kernel": be.kernel(),
             "ram_bytes": ram, "has_led": be.has_led(), "simulated": bool(be.simulated), "inventory": inv,
             "sd_selfcheck": self.sd_selfcheck, "stream": self.queue.stream, "current_job": cur,
+            "boot_id": be.boot_id(),
         }
 
     def run_selfcheck(self) -> None:

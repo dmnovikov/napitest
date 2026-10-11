@@ -50,13 +50,14 @@ def client(settings):
             close_agents()
 
 
-def hello(cpuid="CPU0001", mac="02:00:00:00:00:01", current_job=None, simulated=True, stream=None):
+def hello(cpuid="CPU0001", mac="02:00:00:00:00:01", current_job=None, simulated=True, stream=None, boot_id=None):
     return {
         "type": "hello", "proto": 1, "cpuid": cpuid, "id_source": "dt-serial", "mac": mac,
         "mac_source": "cpuid-derived", "ip": "10.0.0.2", "hostname": "napi", "agent_version": "0.1.0",
         "test_sd_version": "2026.10.1", "kernel": "6.6", "ram_bytes": 512 << 20, "has_led": False,
         "simulated": simulated, "inventory": {"ok": True, "target": "mmcblk0", "devices": [], "reasons": []},
         "sd_selfcheck": {"state": "pass"}, "stream": stream or f"s-{cpuid}", "current_job": current_job,
+        "boot_id": boot_id,
     }
 
 

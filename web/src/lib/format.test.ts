@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   currentStageLine,
+  previousText,
   formatDuration,
   formatBytes,
   hasWarn,
@@ -83,6 +84,13 @@ describe('tile helpers', () => {
     const j = job({ status: 'awaiting_boot', stages: { boot: { state: 'running', detail: 'ждём загрузки с SD-NAND' } } })
     expect(currentStageLine(j, 'awaiting_boot')).toBe('BOOT: ждём загрузки с SD-NAND')
     expect(currentStageLine(job({ status: 'awaiting_boot' }), 'awaiting_boot')).toBe('BOOT: ожидание загрузки')
+  })
+  it('previous result line', () => {
+    const p = { job_id: 'j', status: 'pass', mode: 'test_flash' as const, finished_at: '2026-10-11T14:32:00', batch: 'B', detail: null, warnings_count: 1 }
+    expect(previousText(p)).toBe('уже проверялась: PASS ⚠ · 11.10 14:32 · Тесты + прошивка')
+    expect(previousText({ ...p, status: 'fail', detail: 'NET: tx 41' })).toBe(
+      'уже проверялась: FAIL (NET: tx 41) · 11.10 14:32 · Тесты + прошивка',
+    )
   })
   it('timer counts from start', () => {
     const now = Date.parse('2026-10-10T12:02:14Z')

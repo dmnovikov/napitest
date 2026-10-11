@@ -22,6 +22,7 @@ from ..version import __version__
 log = logging.getLogger("napi.factory")
 
 ACTIVE_STATUSES = ("queued", "running", "awaiting_boot")
+FINAL_STATUSES = ("pass", "fail", "interrupted", "incomplete", "cancelled", "offline")
 BOOT_TIMEOUT_TEXTS = ("BOOT: no report", "BOOT: плата не появилась в сети")
 FINAL_STATUSES = ("pass", "fail", "interrupted", "cancelled", "offline", "incomplete")
 # Итог задания от агента может заменить эти статусы (например, после долгого офлайна).
@@ -247,6 +248,7 @@ class Factory:
         last_seen = dev["last_seen"]
         if dev["id"] in self.last_hb and self.is_online(dev["id"]):
             last_seen = now_iso()
+        previous = self._previous(dev, job)
         return {
             "device_id": dev["id"],
             "display_no": dev["display_no"],
@@ -269,9 +271,27 @@ class Factory:
             "tested_before": bool(dev["tested_pass"]) or self.db.one(
                 "SELECT 1 FROM job j JOIN batch b ON b.id = j.batch_id WHERE j.device_id = ? AND b.kind = 'production'"
                 " AND j.status IN ('pass','fail','interrupted','offline','incomplete') LIMIT 1", (dev["id"],)) is not None,
-            "tile": self.tile(dev["id"], job),
+            "tile": "ready" if previous else self.tile(dev["id"], job),
             "job": self.job_view(job) if job is not None else None,
+            "previous": previous,
         }
+
+    def _previous(self, dev, job) -> dict | None:
+        """Итог прошлой проверки, если плату перезагрузили после него (другой boot_id): оператор
+        должен видеть, что подключил уже проверенную плату, а не принять старый итог за текущий."""
+        if (job is None or job["status"] not in FINAL_STATUSES or not self.is_online(dev["id"])
+                or not dev["boot_id"] or not job["boot_id"] or dev["boot_id"] == job["boot_id"]):
+            return None
+        detail = job["detail"]
+        if job["status"] != "pass":
+            for name, st in self.job_stages(job).items():
+                if st.get("state") in ("fail", "error", "interrupted"):
+                    detail = st.get("detail") or detail
+                    break
+        batch = self.db.one("SELECT name FROM batch WHERE id = ?", (job["batch_id"],))
+        return {"job_id": job["id"], "status": job["status"], "mode": job["mode"],
+                "finished_at": job["finished_at"], "batch": batch["name"] if batch else None,
+                "detail": detail, "warnings_count": self.job_view(job).get("warnings_count", 0)}
 
     def _visible_devices(self) -> list:
         since = to_iso(datetime.now(timezone.utc) - timedelta(hours=self.settings.grid_window_h))
@@ -382,6 +402,7 @@ class Factory:
             "simulated": 1 if msg.get("simulated") else 0,
             "inventory_json": dumps(msg.get("inventory")),
             "selfcheck_json": dumps(msg.get("sd_selfcheck")),
+            "boot_id": msg.get("boot_id"),
             "last_seen": now,
         }
         if dev is None:
@@ -468,6 +489,8 @@ class Factory:
         )
         if job is None:
             return
+        self.db.execute("UPDATE job SET boot_id = (SELECT boot_id FROM device WHERE id = ?) WHERE id = ?",
+                        (device_id, job["id"]))
         await conn.send({"type": "job", "job_id": job["id"], "mode": job["mode"],
                          "params": loads(job["params_json"], {})})
 

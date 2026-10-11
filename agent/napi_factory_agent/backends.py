@@ -110,6 +110,13 @@ class Backend:
     def kernel(self) -> str:
         return platform.release()
 
+    def boot_id(self) -> str | None:
+        """Номер текущей загрузки Linux: меняется при каждой перезагрузке платы."""
+        try:
+            return Path(self.root, "proc/sys/kernel/random/boot_id").read_text().strip() or None
+        except OSError:
+            return None
+
     def on_job_start(self, job_id: str, mode: str) -> None:
         pass
 
@@ -297,6 +304,7 @@ class MockBackend(Backend):
         self.forced_fail = fail_stage
         self.fault: str | None = None
         self.fault_kind: str | None = None
+        self.sim_boot_id = f"sim-{random.getrandbits(64):016x}"   # новая «загрузка» на каждый запуск
         self.log: list[str] = []
         self.boot_hook: Callable[[dict[str, Any]], None] | None = None
         self._build()
@@ -450,6 +458,9 @@ class MockBackend(Backend):
 
     def kernel(self):
         return "6.6.0-sim"
+
+    def boot_id(self):
+        return self.sim_boot_id
 
     def sim_drop(self) -> float:
         if self.drop_rate and self.rnd.random() < self.drop_rate:

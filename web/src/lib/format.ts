@@ -1,4 +1,4 @@
-import type { DeviceView, JobView, Mode, StageName, StageSnap, StageState, Tile } from '../api/types'
+import type { DeviceView, JobView, Mode, PreviousResult, StageName, StageSnap, StageState, Tile } from '../api/types'
 import { STAGES } from '../api/types'
 
 export const STAGE_LABEL: Record<StageName, string> = {
@@ -143,7 +143,7 @@ export function formatBytes(n: number | null | undefined): string {
 
 /** Хвост для квадрата: последние 4 символа серийника, иначе cpuid_tail. */
 export function tileTag(d: Pick<DeviceView, 'serial' | 'cpuid_tail'>): string {
-  if (d.serial) return d.serial.slice(-4)
+  if (d.serial) return d.serial.slice(-4).toUpperCase()
   return d.cpuid_tail ?? '????'
 }
 
@@ -233,4 +233,21 @@ export function jobHasWarn(job: JobView | null | undefined): boolean {
   if (!job) return false
   if ((job.warnings_count ?? 0) > 0) return true
   return STAGES.some((n) => hasWarn(job.stages?.[n]))
+}
+
+/** Короткая дата и время «11.10 14:32» для пометки о прошлой проверке. */
+export function formatShort(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** Пометка «уже проверялась» для квадрата: результат, когда, каким режимом. */
+export function previousText(p: PreviousResult): string {
+  const res = JOB_STATUS_LABEL[p.status] ?? p.status
+  const warn = p.status === 'pass' && p.warnings_count ? ' ⚠' : ''
+  const why = p.status !== 'pass' && p.detail ? ` (${p.detail})` : ''
+  return `уже проверялась: ${res}${warn}${why} · ${formatShort(p.finished_at)} · ${MODE_LABEL[p.mode] ?? p.mode}`
 }

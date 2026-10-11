@@ -515,3 +515,27 @@ def test_net_option_selects_method(client):
     assert full["method"] == "tcp" and full["udp_rate_mbps"] == 90 and full["udp_max_loss_rx_pct"] == 2.0
     with pytest.raises(ValueError):
         p.job_params("test_only", {"net": "max"}, False)
+
+
+def test_reconnected_tested_board_shows_previous(client):
+    a = Agent(client, boot_id="boot-1")
+    start(client, "test_only", [a.ack["device_id"]])
+    jid = a.recv("job")["job_id"]
+    for s in ("ram", "net", "sdnand"):
+        a.pass_stage(jid, s)
+    a.event(jid, "job_finished", data={"result": "pass"})
+    d = wait_for(lambda: (x := device(client, "CPU0001"))["tile"] == "pass" and x)
+    assert d["previous"] is None
+    a.close()
+    # та же загрузка (обрыв связи, перезапуск сервера): итог остаётся на квадрате
+    b = Agent(client, boot_id="boot-1", current_job={"job_id": jid, "mode": "test_only", "finished": True,
+                                                    "result": "pass", "stages": {}})
+    assert device(client, "CPU0001")["tile"] == "pass"
+    b.close()
+    # плату перезагрузили/переподключили: «готова», но видно, что уже проверялась
+    c = Agent(client, boot_id="boot-2")
+    d = device(client, "CPU0001")
+    assert d["tile"] == "ready" and d["tested_before"]
+    assert d["previous"]["status"] == "pass" and d["previous"]["mode"] == "test_only"
+    assert d["previous"]["job_id"] == jid and d["previous"]["batch"]
+    c.close()
