@@ -33,6 +33,23 @@ def load_manifest(images_dir: str, manifest_file: str) -> dict[str, Any]:
     return m
 
 
+def image_path(images_dir: str, manifest_file: str, man: dict[str, Any]) -> Path:
+    """Файл образа лежит рядом со своим манифестом (images/ или images/catalog/)."""
+    return (Path(images_dir) / manifest_file).parent / man["file"]
+
+
+def selfcheck_cache(state_dir: str, manifest_file: str) -> str:
+    """Кэш самопроверки: свой на каждый манифест (образ microSD — прежний selfcheck.json)."""
+    if "/" not in manifest_file:
+        return str(Path(state_dir) / "selfcheck.json")
+    return str(Path(state_dir) / ("selfcheck-" + manifest_file.replace("/", "_") + ".json"))
+
+
+def selfcheck_key(path: Path, man: dict[str, Any]) -> str:
+    st = path.stat()
+    return f"{man['file']}:{st.st_size}:{int(st.st_mtime)}:{man['compressed_sha256']}"
+
+
 def zstd_frame_size(path: str) -> int | None:
     """Размер распакованного образа из заголовка кадра zstd, без распаковки."""
     try:
@@ -60,12 +77,12 @@ def selfcheck(images_dir: str, manifest_file: str, cache_path: str) -> dict[str,
         m = load_manifest(images_dir, manifest_file)
     except ManifestError as e:
         return {"state": "fail", "detail": str(e)}
-    f = Path(images_dir) / m["file"]
+    f = image_path(images_dir, manifest_file, m)
     try:
         st = f.stat()
+        key = selfcheck_key(f, m)
     except OSError:
         return {"state": "fail", "detail": f"нет файла {m['file']}"}
-    key = f"{m['file']}:{st.st_size}:{int(st.st_mtime)}:{m['compressed_sha256']}"
     cache = read_json(cache_path, {}) or {}
     if cache.get("key") == key and cache.get("state") == "pass":
         return {"state": "pass", "detail": "cached", "version": m["version"]}

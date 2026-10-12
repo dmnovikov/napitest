@@ -12,8 +12,8 @@ from ..config import STAGES
 from ..db.database import loads
 from .factory import Factory, FactoryError
 
-CSV_FIELDS = ["serial", "cpuid", "batch", "date", "mode", "status", "test_sd_version", "image_version",
-              "agent_version", "job_id", "warnings"] + [f"{s}_{k}" for s in STAGES for k in ("state", "detail")]
+CSV_FIELDS = ["serial", "cpuid", "batch", "date", "mode", "status", "test_sd_version", "os", "image_version",
+              "image_file", "image_sha256", "image_url", "agent_version", "job_id", "warnings"] + [f"{s}_{k}" for s in STAGES for k in ("state", "detail")]
 
 
 class Reports:
@@ -60,6 +60,7 @@ class Reports:
             "mode": job["mode"], "status": job["status"], "result": job["result"], "detail": job["detail"],
             "created_at": job["created_at"], "started_at": job["started_at"], "finished_at": job["finished_at"],
             "image_version": job["image_version"], "image_sha256": job["image_sha256"],
+            "os_name": job["os_name"], "image_file": job["image_file"], "image_url": job["image_url"],
             "test_sd_version": job["test_sd_version"], "agent_version": job["agent_version"],
             "stages": stages,
         }
@@ -85,6 +86,8 @@ class Reports:
             "batch_id": b["id"], "name": b["name"], "mode": b["mode"], "kind": b["kind"],
             "operator": b["username"], "started_at": b["started_at"], "finished_at": b["finished_at"],
             "image_version": b["image_version"], "test_sd_versions": versions,
+            "os": next((r["os_name"] for r in self.db.all(
+                "SELECT DISTINCT os_name FROM job WHERE batch_id = ? AND os_name IS NOT NULL", (b["id"],))), None),
             "total": len(jobs),
             "pass": sum(1 for j in jobs if j["status"] == "pass"),
             "fail": sum(1 for j in jobs if j["status"] in ("fail", "interrupted", "offline")),
@@ -127,7 +130,9 @@ class Reports:
             row = {
                 "serial": job["serial"] or "", "cpuid": job["cpuid"], "batch": b["name"],
                 "date": (job["finished_at"] or job["created_at"])[:10], "mode": job["mode"], "status": job["status"],
-                "test_sd_version": job["test_sd_version"] or "", "image_version": job["image_version"] or "",
+                "test_sd_version": job["test_sd_version"] or "", "os": job["os_name"] or "",
+                "image_version": job["image_version"] or "", "image_file": job["image_file"] or "",
+                "image_sha256": job["image_sha256"] or "", "image_url": job["image_url"] or "",
                 "agent_version": job["agent_version"] or "", "job_id": job["id"],
             }
             row["warnings"] = "; ".join(w for s in STAGES for w in stages[s].get("warnings") or [])

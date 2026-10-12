@@ -66,6 +66,11 @@ class AuthService:
         )
         return token
 
+    def check_password(self, operator_id: int, password: str) -> bool:
+        """Повторный ввод пароля перед ответственным действием (смена образа ОС, Custom)."""
+        row = self.db.one("SELECT pw_hash FROM operator WHERE id = ?", (operator_id,))
+        return bool(row) and verify_password(password or "", row["pw_hash"])
+
     def logout(self, token: str) -> None:
         self.db.execute("DELETE FROM session WHERE token = ?", (token,))
 

@@ -29,7 +29,7 @@ onMounted(async () => {
       <thead>
         <tr>
           <th>Партия</th><th>Старт</th><th>Окончание</th><th>Оператор</th><th>Режим</th><th>Тип</th>
-          <th>microSD</th><th>Образ</th><th>Плат</th><th>PASS</th><th>FAIL</th><th>Golden</th><th>Экспорт</th>
+          <th>microSD</th><th>ОС / образ</th><th>Плат</th><th>PASS</th><th>FAIL</th><th>Golden</th><th>Экспорт</th>
         </tr>
       </thead>
       <tbody>
@@ -41,7 +41,7 @@ onMounted(async () => {
           <td>{{ MODE_LABEL[b.mode] ?? b.mode }}</td>
           <td>{{ b.kind === 'golden' ? 'проверка стенда' : 'производство' }}</td>
           <td class="mono">{{ sdv(b.test_sd_versions) }}</td>
-          <td class="mono">{{ b.image_version ?? '—' }}</td>
+          <td>{{ b.os ?? b.image_version ?? '—' }}</td>
           <td>{{ b.total }}</td>
           <td class="pass">{{ b.pass }}</td>
           <td class="fail">{{ b.fail }}</td>

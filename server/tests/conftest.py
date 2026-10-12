@@ -19,6 +19,8 @@ def make_settings(tmp_path, **overrides) -> Settings:
     # Существующие тесты проверяют BOOT через отчёт и серийник-счётчик; сеть и cpuid — в test_bootnet.py
     prof["boot"]["method"] = overrides.pop("boot_method", "report")
     prof["serial"]["source"] = overrides.pop("serial_source", "counter")
+    # Без скачивания реальных образов из интернета; варианты ОС задают тесты test_images.py
+    prof["os_images"] = overrides.pop("os_images", [])
     (tmp_path / "profile.yaml").write_text(yaml.safe_dump(prof, allow_unicode=True))
     s.profile_path = str(tmp_path / "profile.yaml")
     s.web_dist = str(tmp_path / "dist")
@@ -27,6 +29,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
     s.allow_simulated = True
     s.iperf_enable = False
     s.discovery_port = 0
+    s.images_dir = str(tmp_path / "images")
     s.tick_s = 0.05
     for k, v in overrides.items():
         setattr(s, k, v)
@@ -50,14 +53,15 @@ def client(settings):
             close_agents()
 
 
-def hello(cpuid="CPU0001", mac="02:00:00:00:00:01", current_job=None, simulated=True, stream=None, boot_id=None):
+def hello(cpuid="CPU0001", mac="02:00:00:00:00:01", current_job=None, simulated=True, stream=None, boot_id=None,
+          images=None):
     return {
         "type": "hello", "proto": 1, "cpuid": cpuid, "id_source": "dt-serial", "mac": mac,
         "mac_source": "cpuid-derived", "ip": "10.0.0.2", "hostname": "napi", "agent_version": "0.1.0",
         "test_sd_version": "2026.10.1", "kernel": "6.6", "ram_bytes": 512 << 20, "has_led": False,
         "simulated": simulated, "inventory": {"ok": True, "target": "mmcblk0", "devices": [], "reasons": []},
         "sd_selfcheck": {"state": "pass"}, "stream": stream or f"s-{cpuid}", "current_job": current_job,
-        "boot_id": boot_id,
+        "boot_id": boot_id, "images": images or {},
     }
 
 

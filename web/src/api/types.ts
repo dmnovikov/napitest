@@ -33,6 +33,8 @@ export interface JobView {
   result: string | null
   detail?: string | null
   warnings_count?: number | null
+  /** Что шили на SD-NAND (меню «ОС на SD-NAND»). */
+  os_name?: string | null
 }
 
 export interface DeviceView {
@@ -85,6 +87,8 @@ export interface Summary {
   pass_warn?: number | null
   /** Сколько плат оператор поставил на стенд (0: не задано). */
   expected?: number | null
+  /** Меню «ОС на SD-NAND» и образы. */
+  images?: ImagesInfo | null
   batch: BatchInfo | null
   versions: { test_sd: string[]; image: string | null; server: string | null }
   operator: string | null
@@ -132,6 +136,9 @@ export interface DeviceJob {
   finished_at: string | null
   image_version: string | null
   image_sha256: string | null
+  os_name?: string | null
+  image_file?: string | null
+  image_url?: string | null
   stages: StageResult[]
 }
 
@@ -140,6 +147,57 @@ export interface DeviceDetail {
   inventory: Inventory | null
   sd_selfcheck: { state?: string; detail?: string } | null
   jobs: DeviceJob[]
+}
+
+export type OsKind = 'url' | 'zero' | 'sd' | 'custom'
+
+export interface MenuItem {
+  key: string
+  name: string
+  kind: OsKind
+  version?: string | null
+}
+
+/** Образ, подготовленный по ссылке (или подготовка новой ссылки). */
+export interface OsImage {
+  id: number
+  url: string
+  state: 'queued' | 'working' | 'ready' | 'error' | 'replaced'
+  detail: string | null
+  pct?: number | null
+  file: string | null
+  source_file: string | null
+  version: string | null
+  image_size: number | null
+  image_sha256: string | null
+  compressed_size: number | null
+  source_sha256: string | null
+  operator: string | null
+  created_at: string
+  ready_at: string | null
+}
+
+export interface OsVariant {
+  key: string
+  name: string
+  kind: 'url' | 'custom'
+  visible: boolean
+  current: OsImage | null
+  next: OsImage | null
+  /** Сколько плат на связи уже имеют текущий образ на microSD. */
+  cards?: { ready: number; online: number } | null
+}
+
+export interface ImagesInfo {
+  menu: MenuItem[]
+  variants: OsVariant[]
+  /** Карты сейчас могут скачивать образы (нет активной партии). */
+  sync: boolean
+}
+
+export interface ImageHistoryRow extends OsImage {
+  variant: string
+  key: string
 }
 
 export interface BatchRow {
@@ -151,6 +209,7 @@ export interface BatchRow {
   started_at: string | null
   finished_at: string | null
   image_version: string | null
+  os?: string | null
   test_sd_versions: string[] | string | null
   pass: number
   fail: number

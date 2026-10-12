@@ -41,6 +41,8 @@ class Settings:
     # сервер за NAT/прокси (пусто: свой IP на интерфейсе запрашивающего)
     discovery_port: int = 18089
     public_url: str = ""
+    # Образы ОС, подготовленные по ссылкам (меню «ОС на SD-NAND»); отсюда их скачивают карты
+    images_dir: str = "/var/lib/napi-factory/images"
     # Только для разработки: разрешить реальному агенту разрушающие операции, даже если
     # профиль не помечен hardware_validated. В production не задавать.
     destructive_override: bool = False
@@ -67,6 +69,7 @@ class Settings:
         s.session_hours = float(env.get("NAPI_SESSION_HOURS", s.session_hours))
         s.discovery_port = int(env.get("NAPI_DISCOVERY_PORT", s.discovery_port))
         s.public_url = env.get("NAPI_PUBLIC_URL", "")
+        s.images_dir = env.get("NAPI_IMAGES_DIR", s.images_dir)
         s.destructive_override = _bool(env.get("NAPI_DESTRUCTIVE_OVERRIDE"))
         return s
 
@@ -128,8 +131,12 @@ class Profile:
             return {"ram": False, "net": False, "sdnand": False, "flash": True, "boot": self.boot_enabled}
         raise ValueError(f"неизвестный режим {mode}")
 
-    def job_params(self, mode: str, options: dict[str, Any] | None, destructive_override: bool) -> dict[str, Any]:
+    def job_params(self, mode: str, options: dict[str, Any] | None, destructive_override: bool,
+                   os_flash: dict[str, Any] | None = None) -> dict[str, Any]:
+        """os_flash: что писать на SD-NAND (выбор меню «ОС на SD-NAND», см. Factory.resolve_os):
+        {"os", "os_name"} и либо "manifest_file"/"image_version" образа, либо "method": "zero"."""
         options = options or {}
+        os_flash = os_flash or {}
         ram = self.section("ram")
         net = self.section("net")
         sd = self.section("sdnand")
@@ -139,8 +146,9 @@ class Profile:
         if boot_opt not in ("check", "skip"):
             raise ValueError("boot: check | skip")
         stages = self.stages_for_mode(mode)
-        if boot_opt == "skip":
-            stages["boot"] = False   # BOOTCHECK не нужен: итог сразу после FLASH, без ожидания
+        zero = os_flash.get("method") == "zero"
+        if boot_opt == "skip" or zero:
+            stages["boot"] = False   # BOOTCHECK не нужен (или грузиться нечему): итог сразу после FLASH
         net_check = options.get("net") or "quick"
         if net_check not in ("quick", "full"):
             raise ValueError("net: quick | full")
@@ -158,7 +166,8 @@ class Profile:
             if pattern not in ("quick", "full"):
                 raise ValueError("sdnand_pattern: quick | full")
         elif mode == "test_flash":
-            pattern = "beyond_image"
+            # SD-NAND за концом образа; под Zeroimage образа нет — быстрый тест по всей ёмкости
+            pattern = "quick" if zero else "beyond_image"
         else:
             pattern = "skip"
 
@@ -178,7 +187,20 @@ class Profile:
                 **{k: sd[k] for k in ("quick_ranges", "range_mib", "block_kib", "timeout_s") if k in sd},
                 "detect": dict(sd.get("detect") or {}),
             },
-            "flash": {k: flash[k] for k in (
-                "image_version", "image_file", "manifest_file", "block_kib", "timeout_s", "provision") if k in flash},
+            "flash": self._flash_params(flash, os_flash),
             "boot": {"enabled": stages["boot"]},
         }
+
+    def _flash_params(self, flash: dict[str, Any], os_flash: dict[str, Any]) -> dict[str, Any]:
+        out = {k: flash[k] for k in (
+            "image_version", "image_file", "manifest_file", "block_kib", "timeout_s", "provision") if k in flash}
+        if os_flash.get("method") == "zero":
+            zero = self.section("zeroimage")
+            out = {"method": "zero", "zero_full": bool(os_flash.get("full")),
+                   "zero_mib": int(zero.get("quick_mib", 64)),
+                   **{k: flash[k] for k in ("block_kib", "timeout_s") if k in flash}}
+        elif os_flash.get("manifest_file"):
+            out.update(manifest_file=os_flash["manifest_file"], image_version=os_flash.get("image_version"),
+                       image_file=os_flash.get("image_file"))
+        out.update(os=os_flash.get("os", "sd"), os_name=os_flash.get("os_name", "Образ на microSD"))
+        return out

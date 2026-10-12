@@ -10,12 +10,11 @@ import hashlib
 import json
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from ..blockio import TargetMismatch
 from ..hardware_detect import target_summary
-from ..images import ManifestError, load_manifest, selfcheck, zstd_frame_size
+from ..images import ManifestError, image_path, load_manifest, selfcheck, selfcheck_cache, zstd_frame_size
 from ..util import MiB, align_up, fmt_size
 from . import StageCtx, StageResult
 from .sdnand import recognize
@@ -35,20 +34,27 @@ def run(ctx: StageCtx) -> StageResult:
     if not ok:
         return StageResult("skipped", f"FLASH: запись запрещена ({why})", {**meas, "blocked": True})
 
+    meas.update(os=p.get("os"), os_name=p.get("os_name"))
+    if p.get("method") == "zero":
+        return run_zero(ctx, meas)
+
     # 2. Манифест и самопроверка (кэш допустим)
     try:
         man = load_manifest(ctx.images_dir, p.get("manifest_file", ""))
     except ManifestError as e:
+        if "/" in p.get("manifest_file", ""):
+            # Образа из меню нет на карте: сбой стенда, а не дефект платы
+            return StageResult("skipped", f"FLASH: образа нет на microSD ({e})", {**meas, "blocked": True})
         return StageResult("fail", f"FLASH: {e}", meas)
     meas.update(image_version=man["version"], image_size=int(man["image_size"]),
                 sha256_compressed=man["compressed_sha256"], manifest_sha256=man["image_sha256"])
     if p.get("image_version") and p["image_version"] != man["version"]:
         return StageResult("fail", f"FLASH: image {man['version']}≠{p['image_version']}", meas)
-    sc = selfcheck(ctx.images_dir, p.get("manifest_file", ""), str(Path(be.state_dir) / "selfcheck.json"))
+    sc = selfcheck(ctx.images_dir, p.get("manifest_file", ""), selfcheck_cache(be.state_dir, p.get("manifest_file", "")))
     ctx.log(f"самопроверка образа: {sc['state']} {sc.get('detail', '')}")
     if sc["state"] != "pass":
         return StageResult("fail", "FLASH_FAIL source", meas)
-    image_file = str(Path(ctx.images_dir) / man["file"])
+    image_file = str(image_path(ctx.images_dir, p.get("manifest_file", ""), man))
     image_size = int(man["image_size"])
     fs = zstd_frame_size(image_file)
     meas["zstd_frame_size"] = fs
@@ -164,4 +170,65 @@ def run(ctx: StageCtx) -> StageResult:
         return StageResult("fail", "FLASH: I/O error", meas)
     finally:
         tgt.close()
-    return StageResult("pass", f"{man['version']} {fmt_size(image_size)}, sha OK, {record['serial']}", meas)
+    label = p.get("os_name") or man["version"]
+    return StageResult("pass", f"{label} {fmt_size(image_size)}, sha OK, {record['serial']}", meas)
+
+
+def run_zero(ctx: StageCtx, meas: dict[str, Any]) -> StageResult:
+    """Zeroimage: нули в начало SD-NAND (загрузчик, таблица разделов) или на всю SD-NAND, со сверкой."""
+    p = ctx.p
+    be = ctx.backend
+    inv = recognize(ctx)
+    if not inv["ok"]:
+        return StageResult("fail", "FLASH: " + target_summary(inv), meas)
+    capacity = int(inv["target_size"])
+    full = bool(p.get("zero_full"))
+    size = capacity if full else min(capacity, int(p.get("zero_mib", 64)) * MiB)
+    limit = be.pattern_limit_bytes()           # симулятор: не гонять гигабайты
+    if limit and full:
+        size = min(size, limit)
+    meas.update(target=inv["target"], capacity_bytes=capacity, zero=True, zero_full=full, zero_bytes=size,
+                image_version="zeroimage")
+    try:
+        tgt = be.open_target(inv)
+    except (TargetMismatch, OSError) as e:
+        ctx.log(f"open: {e}")
+        return StageResult("fail", "FLASH: target mismatch", meas)
+    block = int(p.get("block_kib", 4096)) * 1024
+    zeros = bytes(block)
+    try:
+        ctx.writing = True
+        ctx.shared["flash_write_started"] = True
+        t0 = time.monotonic()
+        pos = unsynced = 0
+        sync_every = int(p.get("sync_mib", 16)) * MiB
+        while pos < size:
+            ctx.check()
+            n = min(block, size - pos)
+            tgt.write_at(pos, zeros[:n])
+            pos += n
+            unsynced += n
+            if unsynced >= sync_every:
+                tgt.sync()
+                unsynced = 0
+            ctx.progress(80 * pos / size, f"нули {100 * pos // size} %")
+        tgt.sync()
+        tgt.flush_cache()
+        ctx.writing = False
+        meas["write_s"] = round(time.monotonic() - t0, 1)
+        pos = 0
+        while pos < size:
+            ctx.check()
+            n = min(block, size - pos)
+            if tgt.read_at(pos, n) != zeros[:n]:
+                meas["mismatch_at"] = pos
+                return StageResult("fail", "FLASH_FAIL readback", meas)
+            pos += n
+            ctx.progress(80 + 20 * pos / size, f"проверка {100 * pos // size} %")
+    except OSError as e:
+        ctx.log(f"I/O error: {e}")
+        return StageResult("fail", "FLASH: I/O error", meas)
+    finally:
+        tgt.close()
+    what = "вся SD-NAND" if full else f"первые {fmt_size(size)}"
+    return StageResult("pass", f"Zeroimage: {what} обнулена", meas)

@@ -91,7 +91,7 @@ def run(ctx: StageCtx) -> StageResult:
         return StageResult("fail", f"SD: size {fmt_size(capacity)}≠{fmt_size((smin + smax) // 2)}", meas)
 
     # Выбор области по режиму
-    if ctx.mode == "test_flash":
+    if ctx.mode == "test_flash" and (ctx.params.get("flash") or {}).get("method") != "zero":
         pmode = "beyond_image"
     else:
         pmode = p.get("pattern", "quick")

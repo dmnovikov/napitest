@@ -44,6 +44,7 @@ def build_core(settings: Settings) -> Core:
     factory = Factory(settings, profile, db)
     factory.normalize_serials()
     factory.normalize_boot_timeouts()
+    factory.catalog.seed()
     return Core(settings, profile, db, auth, factory, Reports(factory))
 
 

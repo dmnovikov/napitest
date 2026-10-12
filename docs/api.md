@@ -113,8 +113,21 @@
 {"type":"serial","job_id":"j_…","serial":"NC-2610-0017","batch":"B-20261010-01","date":"2026-10-10"}
 {"type":"serial","job_id":"j_…","error":"device has no TEST_PASS"}
 {"type":"identify","seconds":10}
+{"type":"images","sync":true,"images":[{"file":"armbian-3.img.zst","manifest":{…манифест…}}]}
 {"type":"error","detail":"…"}
 ```
+
+`images` — что должно лежать на тестовой microSD в `/opt/napi-factory/images/catalog/` (меню
+«ОС на SD-NAND», раздел 5). Приходит после `hello_ack` и при каждом изменении. `sync: false` — идёт
+партия, качать нельзя (скачивание мешает тесту сети и записи SD-NAND). Агент скачивает недостающие
+файлы `GET /api/v1/agent/images/{file}` (Bearer-токен агента, докачка по `Range`), сверяет
+`compressed_sha256`, удаляет лишние и сообщает состояние:
+
+```json
+{"type":"images_status","files":{"armbian-3.img.zst":{"state":"downloading","pct":41.5}}}
+```
+
+`state`: `ready` | `waiting` | `downloading` | `error` (+`detail`). То же поле `images` есть в `hello`.
 
 Если в `hello` `cpuid == null`, сервер выдаёт `cpuid` вида `A<16 hex>` в `hello_ack`; агент сохраняет его на microSD и далее шлёт `id_source: "assigned"`.
 
@@ -140,10 +153,17 @@
   "flash":  {"image_version": "2026.10.0", "image_file": "napi-c-armbian-2026.10.0.img.zst",
              "manifest_file": "napi-c-armbian-2026.10.0.manifest.json",
              "block_kib": 4096, "timeout_s": 3600,
-             "provision": {"method": "file", "offset_bytes": 0, "size_bytes": 0}},
+             "provision": {"method": "none"},
+             "os": "armbian", "os_name": "Armbian 2026.09"},
   "boot":   {"enabled": true}
 }
 ```
+
+`flash.manifest_file` — путь относительно `/opt/napi-factory/images`: образ с microSD
+(`napi-c-armbian-2026.09.manifest.json`) или образ из меню (`catalog/armbian-3.manifest.json`); файл
+образа лежит рядом с манифестом. Если образа из меню на карте нет, FLASH «не выполнено» (стенд).
+Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os": "zero", …}`,
+`boot.enabled: false`, в `test_flash` SD-NAND проверяется быстрым паттерном.
 
 ### 1.4 Inventory
 
@@ -195,7 +215,7 @@
 | POST | `/auth/logout` | выход |
 | GET | `/auth/me` | `{"username"}` |
 | GET | `/state` | полный снимок для главного экрана (как `snapshot` в UI WS) |
-| POST | `/batches` | запуск: `{"mode","device_ids":[…],"confirm":true,"kind":"production"|"golden","options":{"sdnand_pattern":"quick"|"full","memtester":"quick"|"full","net":"quick"|"full"}}` (net full: ещё TCP iperf3; quick: только UDP-поток на udp_rate_mbps по udp_seconds в каждую сторону) |
+| POST | `/batches` | запуск: `{"mode","device_ids":[…],"confirm":true,"kind":"production"|"golden","options":{"sdnand_pattern":"quick"|"full","memtester":"quick"|"full","net":"quick"|"full","boot":"check"|"skip","os":"<key>"|"zero"|"sd"|"custom","zero":"quick"|"full"}}` (net full: ещё TCP iperf3; quick: только UDP-поток на udp_rate_mbps по udp_seconds в каждую сторону) |
 | POST | `/batches/{id}/stop` | «Остановить»: `{"device_ids":[…]}` (пусто = вся партия) |
 | POST | `/stop` | «Остановить» для выбранных плат: `{"device_ids":[…]}` |
 | GET | `/batches` | история партий |
@@ -208,6 +228,12 @@
 | GET | `/jobs/{job_id}` | задание: этапы, измерения, лог, события |
 | GET | `/audit` | журнал действий |
 | PUT | `/expected` | `{"count": N}`: сколько плат на стенде (0: не задано); в Summary поле `expected` |
+| GET | `/images` | меню «ОС на SD-NAND», варианты с текущим и готовящимся образом, история (раздел 5) |
+| POST | `/images` | добавить ОС: `{"name","url","password"}` |
+| PUT | `/images/{key}` | `{"password", "url"?, "name"?, "visible"?, "move": -1|1}` |
+| POST | `/images/custom` | образ клиента (одноразовый): `{"url","password"}` |
+
+`password` — повторный ввод пароля входа; неверный → 403 и запись `password_failed` в журнал.
 
 Разрушающие режимы (`test_flash`, `flash_only`) требуют `"confirm": true`, иначе 400.
 Произвольные команды API не принимает.
@@ -251,3 +277,24 @@ Cookie-сессия обязательна. Сообщения сервер → 
 {"type":"devices","devices":[DeviceView…]}     // изменившиеся платы, пачкой раз в ≤ 0.5 с
 {"type":"summary","summary":Summary}
 ```
+
+## 5. Меню «ОС на SD-NAND» (образы)
+
+Пункты меню (первый — выбор по умолчанию в веб-интерфейсе):
+
+1. Варианты со ссылкой (`os_variant`, страница «Образы»): Armbian, NAPI Linux и добавленные. Начальный
+   список — `os_images` в профиле, при первом запуске сервера.
+2. `zero` — Zeroimage: нули в первые `zeroimage.quick_mib` МБ или (`"zero":"full"`) на всю SD-NAND.
+3. `sd` — образ, записанный на тестовую microSD при сборке (прежнее поведение; по умолчанию в API, если
+   `os` не указан).
+4. `custom` — одноразовый образ клиента по ссылке, в список не сохраняется.
+
+Подготовка образа по ссылке (сервер, `NAPI_IMAGES_DIR`, по умолчанию `/var/lib/napi-factory/images`):
+скачивание (http/https, перенаправления) → сверка с `SHA256SUMS` рядом с файлом, если он есть →
+распаковка (`.xz`, `.zst`, `.gz` или сырой `.img`) с проверкой «образ всего диска» (MBR/GPT) и
+размера (не больше `sdnand.detect.size_min_bytes`) → упаковка в `.zst` с размером в заголовке →
+манифест. Пока новый образ не готов, шьётся прежний; после готовности прежний файл удаляется.
+
+Запуск разрушающего режима с вариантом из меню проверяет, что образ готов на сервере и есть на картах
+всех выбранных плат (иначе 409 со списком плат). Задание хранит `os_key`, `os_name`, `image_file`
+(исходный файл), `image_url`, `image_sha256` — они попадают в карточку платы и CSV.

@@ -17,6 +17,7 @@ from ..config import DESTRUCTIVE_MODES, MODES, STAGES, TEST_STAGES, Profile, Set
 from ..db.database import Database, dumps, loads, now_iso, parse_iso, to_iso
 from ..scheduler.bootnet import BootNet, subnet_hosts
 from ..scheduler.net import Grant, NetScheduler
+from .catalog import CUSTOM, SD, ZERO, Catalog
 from ..version import __version__
 
 log = logging.getLogger("napi.factory")
@@ -99,6 +100,16 @@ class Factory:
         self.net = NetScheduler(ports, lease_s=lease)
         self._bg: list[asyncio.Task] = []
         self._last_seen_flush = time.monotonic()
+        # Образы ОС для SD-NAND и их наличие на тестовых microSD (по отчётам агентов)
+        self.catalog = Catalog(settings, profile, db, self._catalog_changed)
+        self.card_images: dict[int, dict[str, dict]] = {}   # device_id -> {file: {state, pct, detail}}
+        self._catalog_dirty = False
+        self._sync_allowed: bool | None = None
+
+    def _catalog_changed(self) -> None:
+        # Вызывается и из потока подготовки образа: только флаги, рассылка — в tick
+        self._catalog_dirty = True
+        self.summary_dirty = True
 
     # ------------------------------------------------------------------ служебное
 
@@ -237,6 +248,7 @@ class Factory:
             "warnings_count": sum(len(s.get("warnings") or []) for s in stages.values()),
             "result": job["result"],
             "detail": job["detail"],
+            "os_name": job["os_name"],
         }
 
     def tile(self, device_id: int, job) -> str:
@@ -357,7 +369,72 @@ class Factory:
             "net": self.net.stats(),
             "hardware_validated": self.profile.hardware_validated,
             "expected": self.expected_boards(),
+            "images": self.images_view(),
         }
+
+    def images_view(self) -> dict:
+        online = [d for d in self.agents if self.is_online(d)]
+        files: dict[str, int] = {}
+        for d in online:
+            for name, st in (self.card_images.get(d) or {}).items():
+                if st.get("state") == "ready":
+                    files[name] = files.get(name, 0) + 1
+        variants = self.catalog.variants(files, len(online))
+        return {"menu": self.catalog.menu(variants), "variants": variants, "sync": bool(self._sync_allowed)}
+
+    # ------------------------------------------------------------------ образы ОС на картах
+
+    def _catalog_msg(self) -> dict:
+        return {"type": "images", "sync": bool(self._sync_allowed), "images": self.catalog.agent_catalog()}
+
+    async def push_catalog(self) -> None:
+        msg = self._catalog_msg()
+        for conn in list(self.agents.values()):
+            await conn.send(msg)
+
+    def _sync_now(self) -> bool:
+        """Карты обновляют образы только между партиями: скачивание не мешает тесту сети и записи."""
+        return self.db.one("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1") is None
+
+    def resolve_os(self, options: dict, device_ids: list[int]) -> tuple[dict, dict]:
+        """Выбор меню «ОС на SD-NAND» → параметры FLASH для агента и поля задания для отчёта."""
+        key = options.get("os") or SD
+        if key == SD:
+            ver = self.profile.image_version
+            return ({"os": SD, "os_name": "Образ на microSD"},
+                    {"os_key": SD, "os_name": "Образ на microSD", "image_version": ver,
+                     "image_file": self.profile.section("flash").get("image_file"), "image_url": None})
+        if key == ZERO:
+            zero = options.get("zero") or "quick"
+            if zero not in ("quick", "full"):
+                raise FactoryError("zero: quick | full")
+            name = "Zeroimage (полная)" if zero == "full" else "Zeroimage"
+            return ({"os": ZERO, "os_name": name, "method": "zero", "full": zero == "full"},
+                    {"os_key": ZERO, "os_name": name, "image_version": "zeroimage", "image_file": None,
+                     "image_url": None})
+        img = self.catalog.current(key)
+        if img is None:
+            v = self.db.one("SELECT name FROM os_variant WHERE key = ?", (key,))
+            if v is None:
+                raise FactoryError(f"нет ОС «{key}» в меню")
+            raise FactoryError(f"образ «{v['name']}» ещё не готов на сервере", 409)
+        if key != CUSTOM and not img["visible"]:
+            raise FactoryError(f"ОС «{img['vname']}» убрана из меню")
+        not_ready = []
+        for d in device_ids:
+            st = (self.card_images.get(d) or {}).get(img["file"]) or {}
+            if st.get("state") != "ready":
+                dev = self.db.one("SELECT display_no FROM device WHERE id = ?", (d,))
+                pct = f" {st['pct']:.0f} %" if st.get("state") == "downloading" and st.get("pct") is not None else ""
+                not_ready.append(f"{dev['display_no'] if dev else d}{pct}")
+        if not_ready:
+            raise FactoryError(f"образ «{img['vname']}» ещё не на картах плат: {', '.join(not_ready)}", 409,
+                               {"not_ready": not_ready})
+        name = f"{img['vname']} {img['version']}" if img["version"] else img["vname"]
+        return ({"os": key, "os_name": name, "manifest_file": f"catalog/{img['file'][:-len('.img.zst')]}.manifest.json",
+                 "image_version": img["version"], "image_file": img["file"]},
+                {"os_key": key, "os_name": name, "image_version": img["version"], "image_file": img["source_file"],
+                 "image_url": img["url"]})
 
     def state(self, operator: str | None = None) -> dict:
         devices = self.devices_view()
@@ -455,6 +532,11 @@ class Factory:
         serial = self.db.one("SELECT serial FROM device WHERE id = ?", (device_id,))["serial"]
         await conn.send({"type": "hello_ack", "device_id": device_id, "cpuid": cpuid, "serial": serial,
                          "server_time": time.time()})
+        if isinstance(msg.get("images"), dict):
+            self.card_images[device_id] = msg["images"]
+        if self._sync_allowed is None:
+            self._sync_allowed = self._sync_now()
+        await conn.send(self._catalog_msg())
 
         current = msg.get("current_job") or None
         if current and current.get("job_id"):
@@ -539,6 +621,9 @@ class Factory:
             self.summary_dirty = True
         elif kind == "serial_request":
             await conn.send(self._serial_reply(device_id, msg.get("job_id")))
+        elif kind == "images_status":
+            self.card_images[device_id] = msg.get("files") or {}
+            self.summary_dirty = True
         else:
             await conn.send({"type": "error", "detail": f"unknown message type {kind!r}"})
 
@@ -596,7 +681,7 @@ class Factory:
                     " image_sha256 = COALESCE(?, image_sha256) WHERE id = ?",
                     (m.get("image_version"), m.get("sha256_readback") or m.get("manifest_sha256"), job["id"]),
                 )
-                if m.get("image_version"):
+                if m.get("image_version") and not m.get("zero"):
                     self.db.execute(
                         "INSERT OR IGNORE INTO image (version, sha256, size_bytes, first_seen) VALUES (?, ?, ?, ?)",
                         (m["image_version"], m.get("sha256_readback") or m.get("manifest_sha256"),
@@ -764,8 +849,9 @@ class Factory:
             seen = self.previously_tested(device_ids, mode)
             if seen:
                 raise FactoryError("часть плат уже проверялась", 409, {"retest": seen})
+        os_flash, os_job = ({}, {}) if mode not in DESTRUCTIVE_MODES else self.resolve_os(options or {}, device_ids)
         try:
-            params = self.profile.job_params(mode, options, self.settings.destructive_override)
+            params = self.profile.job_params(mode, options, self.settings.destructive_override, os_flash)
         except ValueError as exc:
             raise FactoryError(str(exc)) from exc
 
@@ -784,7 +870,7 @@ class Factory:
             "INSERT INTO batch (name, kind, mode, operator_id, started_at, image_version, profile_name, options_json,"
             " golden_batch_id, golden_result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (name, kind, mode, operator["id"], now,
-             self.profile.image_version if mode in DESTRUCTIVE_MODES else None, self.profile.name,
+             os_job.get("image_version") if mode in DESTRUCTIVE_MODES else None, self.profile.name,
              dumps(options or {}), golden["id"] if golden else None, golden["golden_result"] if golden else None),
         )
         batch_id = cur.lastrowid
@@ -794,12 +880,17 @@ class Factory:
             dev = self.db.one("SELECT test_sd_version, agent_version FROM device WHERE id = ?", (device_id,))
             self.db.execute(
                 "INSERT INTO job (id, batch_id, device_id, mode, status, created_at, params_json, test_sd_version,"
-                " agent_version) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
-                (job_id, batch_id, device_id, mode, now, dumps(params), dev["test_sd_version"], dev["agent_version"]),
+                " agent_version, os_key, os_name, image_file, image_url) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?,"
+                " ?, ?, ?, ?)",
+                (job_id, batch_id, device_id, mode, now, dumps(params), dev["test_sd_version"], dev["agent_version"],
+                 os_job.get("os_key"), os_job.get("os_name"), os_job.get("image_file"), os_job.get("image_url")),
             )
             job_ids.append(job_id)
         self.audit(operator["username"], "batch_start",
-                   {"batch": name, "mode": mode, "kind": kind, "devices": device_ids, "options": options or {}})
+                   {"batch": name, "mode": mode, "kind": kind, "devices": device_ids, "options": options or {},
+                    **({"os": os_job.get("os_name"), "image": os_job.get("image_file")} if os_job else {})})
+        self._sync_allowed = False       # партия идёт: карты не качают образы (см. tick)
+        await self.push_catalog()
         if (options or {}).get("allow_retest"):
             self.audit(operator["username"], "retest_confirmed",
                        {"batch": name, "devices": [r["device_id"] for r in self.previously_tested(device_ids, mode)]})
@@ -1111,6 +1202,12 @@ class Factory:
                 await self._finalize(job, "offline", detail="нет связи с платой дольше таймаута задания")
 
         await self._send_grants(self.net.expire())
+        sync = self._sync_now()
+        if sync != self._sync_allowed or self._catalog_dirty:
+            self._sync_allowed = sync
+            self._catalog_dirty = False
+            self.summary_dirty = True
+            await self.push_catalog()
         # last_seen пишется раз в минуту, а не на каждый heartbeat
         if time.monotonic() - self._last_seen_flush >= 60:
             self._last_seen_flush = time.monotonic()
@@ -1186,9 +1283,11 @@ class Factory:
                 await asyncio.sleep(float(self.profile.section("boot").get("probe_s", 3)))
 
         self._bg = [asyncio.create_task(ticker()), asyncio.create_task(broadcaster())]
+        self.catalog.start()
         if self.boot_method == "network":
             self._bg.append(asyncio.create_task(boot_watcher()))
 
     async def stop_background(self) -> None:
+        await self.catalog.stop()
         for task in self._bg:
             task.cancel()

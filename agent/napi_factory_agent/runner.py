@@ -18,6 +18,7 @@ from . import PROTO, STAGES, __version__
 from .config import AgentConfig
 from .identity import read_cpuid, read_mac
 from .images import find_manifest, selfcheck
+from .imagesync import ImageSync
 from .queue import EventQueue
 from .stages import StageCancelled, StageCtx, StageResult, StageTimeout
 from .stages import flash as st_flash
@@ -98,6 +99,7 @@ class Agent:
         self._task: asyncio.Task | None = None
         self._stage_t0: float | None = None
         self.sd_selfcheck: dict[str, Any] = {"state": "n/a"}
+        self.images = ImageSync(self, cfg.images_dir, str(self.state_dir))
         self.cpuid, self.id_source = read_cpuid(backend.root, cfg["identity"], self.state.get("assigned_cpuid"))
         self._recover()
 
@@ -177,7 +179,7 @@ class Agent:
             "test_sd_version": read_text(self.cfg.version_file, "unknown"), "kernel": be.kernel(),
             "ram_bytes": ram, "has_led": be.has_led(), "simulated": bool(be.simulated), "inventory": inv,
             "sd_selfcheck": self.sd_selfcheck, "stream": self.queue.stream, "current_job": cur,
-            "boot_id": be.boot_id(),
+            "boot_id": be.boot_id(), "images": dict(self.images.status),
         }
 
     def run_selfcheck(self) -> None:
@@ -215,6 +217,8 @@ class Agent:
             fut = self._waiters.pop(key, None)
             if fut and not fut.done():
                 fut.set_result(msg)
+        elif t == "images":
+            self.images.on_catalog(msg)
         elif t == "identify":
             asyncio.get_running_loop().run_in_executor(None, self.backend.identify, int(msg.get("seconds", 10)))
         elif t == "error":
@@ -237,6 +241,7 @@ class Agent:
             self.emit("log", {"lines": [f"задание {job_id} отклонено: активно {cur['job_id']}"]}, job_id=job_id)
             return False
         params = msg.get("params") or {}
+        self.images.pause()
         with self.lock:
             self.state["job"] = {
                 "job_id": job_id, "mode": mode, "params": params, "cpuid": self.cpuid,
@@ -336,6 +341,7 @@ class Agent:
         if self.link:
             self.link.send_soon(self.snapshot())
         self.backend.on_job_finished(self.snapshot())
+        self.images.kick()
 
     async def _run_stage(self, name: str, job_id: str, mode: str, params: dict, shared: dict) -> None:
         timeout = float((params.get(name) or {}).get("timeout_s", 900))

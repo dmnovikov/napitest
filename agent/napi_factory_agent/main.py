@@ -35,6 +35,7 @@ async def run_agent(agent: Agent, url: str, token: str, heartbeat_s: float = 3.0
 
         link.selfcheck_task = asyncio.create_task(_selfcheck())
     link.task = asyncio.create_task(link.run_forever())
+    link.images_task = asyncio.create_task(agent.images.run())
     return link
 
 

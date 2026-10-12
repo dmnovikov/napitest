@@ -1,4 +1,14 @@
-import type { AuditRow, BatchDetail, BatchRow, DeviceDetail, DeviceView, Mode, Summary } from './types'
+import type {
+  AuditRow,
+  BatchDetail,
+  BatchRow,
+  DeviceDetail,
+  DeviceView,
+  ImageHistoryRow,
+  ImagesInfo,
+  Mode,
+  Summary,
+} from './types'
 
 export const API = '/api/v1'
 
@@ -53,7 +63,15 @@ export const api = {
     device_ids: number[]
     confirm: boolean
     kind: 'production' | 'golden'
-    options?: { sdnand_pattern?: 'quick' | 'full'; memtester?: 'quick' | 'full'; net?: 'quick' | 'full'; boot?: 'check' | 'skip'; allow_retest?: boolean }
+    options?: {
+      sdnand_pattern?: 'quick' | 'full'
+      memtester?: 'quick' | 'full'
+      net?: 'quick' | 'full'
+      boot?: 'check' | 'skip'
+      os?: string
+      zero?: 'quick' | 'full'
+      allow_retest?: boolean
+    }
   }) => request<unknown>('POST', '/batches', body),
   stop: (device_ids: number[]) => request<unknown>('POST', '/stop', { device_ids }),
   stopBatch: (id: number, device_ids: number[] = []) =>
@@ -65,6 +83,15 @@ export const api = {
   setGolden: (id: number, is_golden: boolean) =>
     request<unknown>('POST', `/devices/${id}/golden`, { is_golden }),
   audit: () => request<AuditRow[]>('GET', '/audit'),
+  images: () => request<ImagesInfo & { history: ImageHistoryRow[] }>('GET', '/images'),
+  addImage: (name: string, url: string, password: string) =>
+    request<{ key: string }>('POST', '/images', { name, url, password }),
+  editImage: (
+    key: string,
+    password: string,
+    change: { url?: string; name?: string; visible?: boolean; move?: number },
+  ) => request<unknown>('PUT', `/images/${encodeURIComponent(key)}`, { password, ...change }),
+  setCustom: (url: string, password: string) => request<unknown>('POST', '/images/custom', { url, password }),
 }
 
 export const links = {

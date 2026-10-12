@@ -1,4 +1,16 @@
-import type { DeviceView, JobView, Mode, PreviousResult, StageName, StageSnap, StageState, Tile } from '../api/types'
+import type {
+  DeviceView,
+  ImagesInfo,
+  JobView,
+  MenuItem,
+  Mode,
+  OsImage,
+  PreviousResult,
+  StageName,
+  StageSnap,
+  StageState,
+  Tile,
+} from '../api/types'
 import { STAGES } from '../api/types'
 
 export const STAGE_LABEL: Record<StageName, string> = {
@@ -258,4 +270,53 @@ export function shownStages(job: JobView | null): StageName[] {
   const boot = job?.stages?.boot
   const show = boot !== undefined && (boot.state !== 'skipped' || hasWarn(boot))
   return STAGES.filter((n) => n !== 'boot' || show)
+}
+
+/** Ход подготовки образа по ссылке: «скачивание 120 из 601 МБ, 20 %». */
+export function prepText(img: OsImage): string {
+  if (img.state === 'error') return `ошибка: ${img.detail ?? 'неизвестно'}`
+  if (img.state === 'queued') return 'в очереди на скачивание'
+  const pct = img.pct !== null && img.pct !== undefined ? `, ${Math.floor(img.pct)} %` : ''
+  return `${img.detail ?? 'подготовка'}${pct}`
+}
+
+export interface OsLine {
+  text: string
+  /** ok — можно шить; warn — не на всех картах или идёт обновление; error — шить нечего. */
+  tone: 'ok' | 'warn' | 'error'
+}
+
+/** Строка под меню «ОС на SD-NAND»: что именно будет записано и есть ли оно на картах. */
+export function osLine(item: MenuItem | undefined, info: ImagesInfo | null | undefined, zeroFull = false): OsLine {
+  if (!item) return { text: '', tone: 'error' }
+  if (item.kind === 'sd') {
+    return { text: `образ, записанный на тестовую microSD${item.version ? ` (${item.version})` : ''}, без обновления`, tone: 'ok' }
+  }
+  if (item.kind === 'zero') {
+    return {
+      text: zeroFull
+        ? 'нули на всю SD-NAND (несколько минут); загрузка не проверяется'
+        : 'нули в начало SD-NAND (загрузчик, таблица разделов); загрузка не проверяется',
+      tone: 'ok',
+    }
+  }
+  const v = info?.variants.find((x) => x.key === item.key)
+  const cur = v?.current
+  const nxt = v?.next
+  if (!cur) {
+    if (nxt) return { text: `образ готовится: ${prepText(nxt)}`, tone: nxt.state === 'error' ? 'error' : 'warn' }
+    return { text: item.kind === 'custom' ? 'укажите ссылку на образ клиента' : 'образ не задан', tone: 'error' }
+  }
+  const parts = [cur.source_file ?? cur.file ?? '', `sha ${(cur.image_sha256 ?? '').slice(0, 12)}`]
+  let tone: OsLine['tone'] = 'ok'
+  if (v?.cards) {
+    const { ready, online } = v.cards
+    if (online && ready >= online) parts.push('на картах ✓')
+    else {
+      parts.push(`на картах ${ready} из ${online}${info?.sync ? ', обновляются' : ', обновятся после партии'}`)
+      tone = 'warn'
+    }
+  }
+  if (nxt) parts.push(`новая ссылка: ${prepText(nxt)}`)
+  return { text: parts.join(' · '), tone }
 }

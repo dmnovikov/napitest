@@ -117,6 +117,7 @@ class WSLink:
         self.heartbeat_s = heartbeat_s
         self.mdns = mdns
         self.ws: Any = None
+        self.current_url: str | None = None
         self.connected = asyncio.Event()
         self._events = asyncio.Event()
         self._stop = False
@@ -142,6 +143,14 @@ class WSLink:
             await ws.send(json.dumps(msg, ensure_ascii=False))
         except Exception:  # noqa: BLE001 — обрыв обработает основной цикл
             pass
+
+    def http_base(self) -> str | None:
+        """http(s)://хост:порт сервера, к которому подключён агент (для скачивания образов)."""
+        url = self.current_url
+        if not url:
+            return None
+        u = urlparse(url)
+        return f"{'https' if u.scheme == 'wss' else 'http'}://{u.netloc}"
 
     def pause(self, seconds: float) -> None:
         """Разорвать соединение и не подключаться seconds (симуляция обрыва/перезагрузки)."""
@@ -197,6 +206,7 @@ class WSLink:
                     self._fails = 0
                     backoff = 1.0
                     self.agent.server_addr = server_addr(url)
+                    self.current_url = url
                     await self._session(ws)
             except websockets.exceptions.InvalidStatusCode as e:
                 log.warning("сервер отклонил подключение: %s", e)

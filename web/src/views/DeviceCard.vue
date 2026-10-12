@@ -234,7 +234,9 @@ const canLabel = computed(() => {
           <div v-if="open.has(j.job_id)" class="job-body">
             <div class="muted small">
               Задание <span class="mono">{{ j.job_id }}</span>
-              <template v-if="j.image_version"> · образ <span class="mono">{{ j.image_version }}</span></template>
+              <template v-if="j.os_name"> · ОС <b>{{ j.os_name }}</b></template>
+              <template v-if="j.image_file"> · <span class="mono">{{ j.image_file }}</span></template>
+              <template v-else-if="j.image_version"> · образ <span class="mono">{{ j.image_version }}</span></template>
               <template v-if="j.image_sha256"> · SHA-256 <span class="mono">{{ j.image_sha256 }}</span></template>
             </div>
             <div v-for="s in j.stages" :key="s.stage" class="stage">

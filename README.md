@@ -19,7 +19,7 @@ cd web && npm ci && npm run build && cd .. && scripts/deploy-web.sh   # сбор
 
 # сервер
 cd server && python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-NAPI_DB_PATH=/tmp/napi/factory.db NAPI_AGENT_TOKEN=dev-token-0123456789abcdef \
+NAPI_DB_PATH=/tmp/napi/factory.db NAPI_IMAGES_DIR=/tmp/napi/images NAPI_AGENT_TOKEN=dev-token-0123456789abcdef \
 NAPI_ADMIN_PASSWORD=admin NAPI_ALLOW_SIMULATED=1 NAPI_IPERF_ENABLE=0 \
 .venv/bin/python -m app.main &
 cd ..
@@ -30,6 +30,11 @@ python3 examples/simulated-agents/run.py --server ws://127.0.0.1:8080/ws/agent \
 ```
 
 Открыть http://127.0.0.1:8080, войти `admin` / `admin`, «Выбрать все online» → «Тесты + прошивка».
+
+Что шить на SD-NAND, выбирается в меню «ОС на SD-NAND» (по умолчанию первый пункт — Armbian).
+Ссылки на образы ведутся на странице «Образы» (изменения — с повторным вводом пароля); сервер
+скачивает образ в `NAPI_IMAGES_DIR` (по умолчанию `/var/lib/napi-factory/images`), проверяет и
+раздаёт на тестовые microSD между партиями. Подробно: docs/api.md, раздел 5.
 
 Параметры симулятора: `--fail-rate` (доля заданий с ошибкой), `--drop-rate` (обрывы связи),
 `--boot-fail-rate` (платы без отчёта первой загрузки), `--speed`.

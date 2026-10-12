@@ -5,9 +5,10 @@ import hmac
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from ..services.catalog import CatalogError
 from ..services.factory import FactoryError
 
 SESSION_COOKIE = "napi_session"
@@ -65,6 +66,25 @@ class GoldenIn(BaseModel):
 
 class ExpectedIn(BaseModel):
     count: int
+
+
+class ImageAddIn(BaseModel):
+    name: str
+    url: str
+    password: str = ""
+
+
+class ImageEditIn(BaseModel):
+    password: str = ""
+    url: str | None = None
+    name: str | None = None
+    visible: bool | None = None
+    move: int | None = None
+
+
+class CustomIn(BaseModel):
+    url: str
+    password: str = ""
 
 
 class BootOkIn(BaseModel):
@@ -221,6 +241,77 @@ def job(job_id: str, request: Request, op: dict = Depends(operator)):
 @router.get("/audit")
 def audit(request: Request, op: dict = Depends(operator)):
     return core(request).reports.audit()
+
+
+def _confirm_password(request: Request, op: dict, password: str, action: str) -> None:
+    """Смена образа ОС — после повторного ввода пароля входа (ролей пока нет)."""
+    if not core(request).auth.check_password(op["id"], password):
+        core(request).factory.audit(op["username"], "password_failed", {"action": action})
+        raise HTTPException(403, "неверный пароль")
+
+
+def _catalog_error(exc: CatalogError):
+    return JSONResponse({"detail": str(exc), "extra": None}, status_code=exc.status)
+
+
+@router.get("/images")
+def images(request: Request, op: dict = Depends(operator)):
+    f = core(request).factory
+    return {**f.images_view(), "history": f.catalog.history()}
+
+
+@router.post("/images")
+def image_add(body: ImageAddIn, request: Request, op: dict = Depends(operator)):
+    _confirm_password(request, op, body.password, "image_add")
+    f = core(request).factory
+    try:
+        key = f.catalog.add(body.name, body.url, op["username"])
+    except CatalogError as exc:
+        return _catalog_error(exc)
+    f.audit(op["username"], "image_add", {"key": key, "name": body.name, "url": body.url})
+    return {"ok": True, "key": key}
+
+
+@router.put("/images/{key}")
+def image_edit(key: str, body: ImageEditIn, request: Request, op: dict = Depends(operator)):
+    _confirm_password(request, op, body.password, "image_edit")
+    f = core(request).factory
+    old = f.catalog.current(key)
+    try:
+        if body.url is not None:
+            f.catalog.set_url(key, body.url, op["username"])
+        if body.name is not None or body.visible is not None or body.move:
+            f.catalog.update(key, name=body.name, visible=body.visible, move=body.move)
+    except CatalogError as exc:
+        return _catalog_error(exc)
+    detail = {k: v for k, v in body.model_dump().items() if k != "password" and v is not None}
+    if body.url is not None:
+        detail["old_url"] = old["url"] if old else None
+    f.audit(op["username"], "image_edit", {"key": key, **detail})
+    return {"ok": True}
+
+
+@router.post("/images/custom")
+def image_custom(body: CustomIn, request: Request, op: dict = Depends(operator)):
+    _confirm_password(request, op, body.password, "image_custom")
+    f = core(request).factory
+    try:
+        f.catalog.set_custom(body.url, op["username"])
+    except CatalogError as exc:
+        return _catalog_error(exc)
+    f.audit(op["username"], "image_custom", {"url": body.url})
+    return {"ok": True}
+
+
+@router.get("/agent/images/{name}")
+def agent_image(name: str, request: Request):
+    """Образ для тестовой microSD (с докачкой по Range)."""
+    if not agent_token_ok(request, bearer(request)):
+        raise HTTPException(401, "неверный токен агента")
+    path = core(request).factory.catalog.file_allowed(name)
+    if path is None:
+        raise HTTPException(404, "нет такого образа")
+    return FileResponse(path, media_type="application/octet-stream")
 
 
 @router.post("/agent/boot_ok")

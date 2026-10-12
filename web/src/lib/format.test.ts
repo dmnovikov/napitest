@@ -4,6 +4,7 @@ import {
   previousText,
   shownStages,
   formatDuration,
+  osLine,
   formatBytes,
   hasWarn,
   jobHasWarn,
@@ -13,7 +14,7 @@ import {
   tileTag,
   tileTimer,
 } from './format'
-import type { JobView } from '../api/types'
+import type { ImagesInfo, JobView, OsImage } from '../api/types'
 
 const job = (over: Partial<JobView> = {}): JobView => ({
   job_id: 'j1',
@@ -139,5 +140,38 @@ describe('incomplete', () => {
         sdnand: { state: 'skipped', blocked: true, detail: 'SD: запись запрещена (profile not validated)' } },
     } as any
     expect(currentStageLine(job, 'incomplete')).toBe('SD: запись запрещена (profile not validated)')
+  })
+})
+
+describe('osLine', () => {
+  const img = (over: Partial<OsImage> = {}): OsImage => ({
+    id: 1, url: 'https://x/a.img.xz', state: 'ready', detail: null, file: 'armbian-1.img.zst',
+    source_file: 'Armbian_2026.09.img.xz', version: '2026.09', image_size: 1, image_sha256: 'abcdef0123456789',
+    compressed_size: 1, source_sha256: null, operator: null, created_at: '', ready_at: '', ...over,
+  })
+  const info = (over: Partial<ImagesInfo['variants'][0]> = {}): ImagesInfo => ({
+    menu: [], sync: true,
+    variants: [{ key: 'armbian', name: 'Armbian', kind: 'url', visible: true, current: img(), next: null,
+      cards: { ready: 2, online: 2 }, ...over }],
+  })
+  const armbian = { key: 'armbian', name: 'Armbian', kind: 'url' as const }
+
+  it('ready on all cards', () => {
+    expect(osLine(armbian, info())).toEqual({
+      text: 'Armbian_2026.09.img.xz · sha abcdef012345 · на картах ✓', tone: 'ok' })
+  })
+  it('not yet on every card', () => {
+    const l = osLine(armbian, info({ cards: { ready: 1, online: 3 } }))
+    expect(l.tone).toBe('warn')
+    expect(l.text).toContain('на картах 1 из 3, обновляются')
+  })
+  it('first download in progress', () => {
+    const l = osLine(armbian, info({ current: null, next: img({ state: 'working', detail: 'скачивание 5 из 600 МБ', pct: 0.8 }) }))
+    expect(l).toEqual({ text: 'образ готовится: скачивание 5 из 600 МБ, 0 %', tone: 'warn' })
+  })
+  it('error and builtins', () => {
+    expect(osLine(armbian, info({ current: null, next: img({ state: 'error', detail: 'HTTP 404' }) })).tone).toBe('error')
+    expect(osLine({ key: 'zero', name: 'Zeroimage', kind: 'zero' }, null, true).text).toContain('всю SD-NAND')
+    expect(osLine({ key: 'custom', name: 'Custom', kind: 'custom' }, info()).text).toBe('укажите ссылку на образ клиента')
   })
 })

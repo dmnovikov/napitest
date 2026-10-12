@@ -3,12 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BoardTile from '../components/BoardTile.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import PasswordDialog from '../components/PasswordDialog.vue'
 import RetestDialog from '../components/RetestDialog.vue'
 import TopPanel from '../components/TopPanel.vue'
 import { api, links } from '../api/http'
 import { live } from '../api/live'
 import type { DeviceView, Mode, RetestItem } from '../api/types'
-import { MODE_LABEL } from '../lib/format'
+import { MODE_LABEL, osLine } from '../lib/format'
 import { retestList } from '../lib/retest'
 
 const router = useRouter()
@@ -22,6 +23,40 @@ const fullPattern = ref(false)
 const fullMemtester = ref(false)
 const fullNet = ref(false)
 const skipBoot = ref(false)
+
+// Меню «ОС на SD-NAND»: по умолчанию первый пункт (Armbian); список ведёт сервер (страница «Образы»)
+const osMenu = computed(() => live.summary?.images?.menu ?? [])
+const osKey = ref('')
+const zeroFull = ref(false)
+watch(
+  osMenu,
+  (m) => {
+    if (m.length && !m.some((i) => i.key === osKey.value)) osKey.value = m[0].key
+  },
+  { immediate: true },
+)
+const osItem = computed(() => osMenu.value.find((i) => i.key === osKey.value))
+const osInfo = computed(() => osLine(osItem.value, live.summary?.images, zeroFull.value))
+const osName = computed(() => {
+  const i = osItem.value
+  if (!i) return '—'
+  if (i.kind === 'zero') return zeroFull.value ? 'Zeroimage (полная)' : 'Zeroimage'
+  const v = live.summary?.images?.variants.find((x) => x.key === i.key)
+  const ver = v?.current?.version ?? i.version
+  return i.kind === 'custom' ? `Custom: ${v?.current?.source_file ?? '—'}` : `${i.name}${ver ? ' ' + ver : ''}`
+})
+const customDialog = ref(false)
+const customError = ref<string | null>(null)
+async function saveCustom(v: { url: string; password: string }) {
+  customError.value = null
+  try {
+    await api.setCustom(v.url, v.password)
+    customDialog.value = false
+    say('Образ клиента скачивается и проверяется; затем он разойдётся по картам')
+  } catch (e) {
+    customError.value = e instanceof Error ? e.message : String(e)
+  }
+}
 const busy = ref(false)
 const message = ref<{ text: string; error: boolean } | null>(null)
 
@@ -165,6 +200,7 @@ async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golde
       memtester: (fullMemtester.value ? 'full' : 'quick') as 'quick' | 'full',
       net: (fullNet.value ? 'full' : 'quick') as 'quick' | 'full',
       boot: (skipBoot.value ? 'skip' : 'check') as 'check' | 'skip',
+      ...(mode === 'test_only' ? {} : { os: osKey.value, zero: (zeroFull.value ? 'full' : 'quick') as 'quick' | 'full' }),
     },
   }
   try {
@@ -198,16 +234,24 @@ function launch(mode: Mode) {
     })
     return
   }
+  if (osInfo.value.tone === 'error') {
+    say(`ОС на SD-NAND «${osItem.value?.name ?? '—'}»: ${osInfo.value.text}`, true)
+    return
+  }
+  const zero = osItem.value?.kind === 'zero'
   const warn =
     mode === 'flash_only'
-      ? 'Тесты не выполняются. Внутренняя SD-NAND будет полностью перезаписана.'
-      : 'После PASS всех тестов внутренняя SD-NAND будет полностью перезаписана.'
-  const boot = skipBoot.value
-    ? 'Загрузка с SD-NAND проверяться не будет.'
-    : 'BOOTCHECK: после прошивки выключите плату, выньте microSD и включите (ожидание до 10 мин).'
+      ? 'Тесты не выполняются. Внутренняя SD-NAND будет перезаписана.'
+      : 'После PASS всех тестов внутренняя SD-NAND будет перезаписана.'
+  const boot =
+    skipBoot.value || zero
+      ? 'Загрузка с SD-NAND проверяться не будет.'
+      : 'BOOTCHECK: после прошивки выключите плату, выньте microSD и включите (ожидание до 10 мин).'
   ask({
     title: MODE_LABEL[mode],
-    message: `${shortageText()}Плат выбрано: ${ids.length}.\n${warn}\n${boot}\nПродолжить?`,
+    message:
+      `${shortageText()}Плат выбрано: ${ids.length}.\nОС на SD-NAND: ${osName.value}\n(${osInfo.value.text})\n` +
+      `${warn}\n${boot}\nПродолжить?`,
     okText: 'Запустить',
     danger: true,
     run: () => startBatch(mode, ids),
@@ -332,6 +376,22 @@ function exportCsv() {
           <input v-model="skipBoot" type="checkbox" /> Не проверять загрузку с SD-NAND (BOOTCHECK)
         </label>
       </div>
+      <div class="group os">
+        <label class="ossel">
+          ОС на SD-NAND:
+          <select v-model="osKey">
+            <option v-for="m in osMenu" :key="m.key" :value="m.key">{{ m.name }}</option>
+          </select>
+        </label>
+        <label v-if="osItem?.kind === 'zero'" class="chk" title="Без галочки: нули в первые 64 МБ, секунды. С галочкой: вся SD-NAND, несколько минут.">
+          <input v-model="zeroFull" type="checkbox" /> полный
+        </label>
+        <button v-if="osItem?.kind === 'custom'" :disabled="busy" @click="customError = null; customDialog = true">
+          Ссылка на образ клиента…
+        </button>
+        <span class="osline" :class="osInfo.tone">{{ osInfo.text }}</span>
+        <router-link to="/images" class="oslink">Образы</router-link>
+      </div>
       <div class="group expected">
         <span>Плат на стенде:</span>
         <input
@@ -379,6 +439,16 @@ function exportCsv() {
       :danger="pending.danger"
       @ok="confirmOk"
       @cancel="pending = null"
+    />
+    <PasswordDialog
+      v-if="customDialog"
+      title="Custom: образ клиента"
+      message="Одноразовый образ: в список «Образы» не сохраняется. Сервер скачает его, проверит, что это образ всего диска, и раздаст на карты между партиями. Прежний Custom удаляется."
+      ask-url
+      ok-text="Подготовить"
+      :error="customError"
+      @ok="saveCustom"
+      @cancel="customDialog = false"
     />
     <RetestDialog
       v-if="retest"
@@ -448,6 +518,38 @@ function exportCsv() {
 }
 .slot small {
   font-size: 11px;
+}
+.os {
+  font-size: 13px;
+}
+.ossel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.ossel select {
+  font: inherit;
+  font-weight: 400;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid #c9cdd3;
+  background: #fff;
+  max-width: 260px;
+}
+.osline {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.osline.warn {
+  color: #9a6700;
+}
+.osline.error {
+  color: #8a4b00;
+  font-weight: 600;
+}
+.oslink {
+  font-size: 13px;
 }
 .expected {
   display: flex;

@@ -74,6 +74,20 @@ flash:
     size_bytes: 1048576
   flash_only_requires_tested: true
 
+# Меню «ОС на SD-NAND»: начальные варианты при первом запуске сервера. Дальше список и ссылки
+# меняются в веб-интерфейсе (страница «Образы», с повторным вводом пароля), а не здесь.
+# Образ скачивается один раз, проверяется (образ всего диска, не больше SD-NAND) и раздаётся на карты.
+os_images:
+  - key: armbian
+    name: Armbian
+    url: https://download.napilinux.ru/linuximg/napic/armbian/06Oct/ArmbianNapi_2026.09_Napi-c_resolute_current_6.18.54.img.xz
+  - key: napilinux
+    name: NAPI Linux
+    url: https://download.napilinux.ru/napilinux/0.3.1/napilinux-napi-rk3308b-s/napilinux-napi-rk3308b-s-0.3.1.rootfs.system_img.xz
+
+zeroimage:
+  quick_mib: 64                # быстрая: нули в начало SD-NAND (загрузчик и таблица разделов); полная — вся SD-NAND
+
 boot:
   enabled: true
   timeout_s: 600

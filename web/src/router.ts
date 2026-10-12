@@ -12,6 +12,7 @@ export const router = createRouter({
     { path: '/batches', component: () => import('./views/BatchesView.vue') },
     { path: '/batches/:id', component: () => import('./views/BatchDetailView.vue') },
     { path: '/audit', component: () => import('./views/AuditView.vue') },
+    { path: '/images', component: () => import('./views/ImagesView.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
