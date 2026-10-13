@@ -6,6 +6,7 @@ import type {
   DeviceView,
   ImageHistoryRow,
   ImagesInfo,
+  SdCardInfo,
   Mode,
   Summary,
 } from './types'
@@ -92,9 +93,13 @@ export const api = {
     change: { url?: string; name?: string; visible?: boolean; move?: number },
   ) => request<unknown>('PUT', `/images/${encodeURIComponent(key)}`, { password, ...change }),
   setCustom: (url: string, password: string) => request<unknown>('POST', '/images/custom', { url, password }),
+  sdcard: () => request<SdCardInfo>('GET', '/sdcard'),
+  sdRebuild: (password: string, url?: string) =>
+    request<unknown>('POST', '/sdcard', { password, url: url || null }),
 }
 
 export const links = {
+  sdDownload: `${API}/sdcard/download`,
   label: (id: number) => `${API}/devices/${id}/label`,
   batchCsv: (id: number) => `${API}/batches/${id}/export.csv`,
   batchJson: (id: number) => `${API}/batches/${id}/export.json`,

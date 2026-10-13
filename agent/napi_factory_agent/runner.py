@@ -19,6 +19,7 @@ from .config import AgentConfig
 from .identity import read_cpuid, read_mac
 from .images import find_manifest, selfcheck
 from .imagesync import ImageSync
+from .selfupdate import Updater
 from .queue import EventQueue
 from .stages import StageCancelled, StageCtx, StageResult, StageTimeout
 from .stages import flash as st_flash
@@ -100,6 +101,7 @@ class Agent:
         self._stage_t0: float | None = None
         self.sd_selfcheck: dict[str, Any] = {"state": "n/a"}
         self.images = ImageSync(self, cfg.images_dir, str(self.state_dir))
+        self.updater = Updater(self)
         self.cpuid, self.id_source = read_cpuid(backend.root, cfg["identity"], self.state.get("assigned_cpuid"))
         self._recover()
 
@@ -175,11 +177,11 @@ class Agent:
             cur.pop("type", None)
         return {
             "type": "hello", "proto": PROTO, "cpuid": self.cpuid, "id_source": self.id_source,
-            **mac, "ip": be.iface_ip(iface), "hostname": be.hostname(), "agent_version": __version__,
+            **mac, "ip": be.iface_ip(iface), "hostname": be.hostname(), "agent_version": f"{__version__}+{self.updater.version}",
             "test_sd_version": read_text(self.cfg.version_file, "unknown"), "kernel": be.kernel(),
             "ram_bytes": ram, "has_led": be.has_led(), "simulated": bool(be.simulated), "inventory": inv,
             "sd_selfcheck": self.sd_selfcheck, "stream": self.queue.stream, "current_job": cur,
-            "boot_id": be.boot_id(), "images": dict(self.images.status),
+            "boot_id": be.boot_id(), "images": dict(self.images.status), "agent_update": self.updater.info(),
         }
 
     def run_selfcheck(self) -> None:
@@ -202,6 +204,7 @@ class Agent:
                 self.serial = msg["serial"]
                 self.state["serial"] = msg["serial"]
                 self.save()
+            self.updater.confirm()
         elif t == "job":
             await self.submit(msg)
         elif t == "cancel":
@@ -218,6 +221,7 @@ class Agent:
             if fut and not fut.done():
                 fut.set_result(msg)
         elif t == "images":
+            self.updater.on_catalog(msg)
             self.images.on_catalog(msg)
         elif t == "identify":
             asyncio.get_running_loop().run_in_executor(None, self.backend.identify, int(msg.get("seconds", 10)))

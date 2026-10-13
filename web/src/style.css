@@ -204,3 +204,12 @@ button.link {
     overflow-x: auto;
   }
 }
+
+@media print {
+  .nav {
+    display: none;
+  }
+  body {
+    background: #fff;
+  }
+}

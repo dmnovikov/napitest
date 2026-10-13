@@ -7,6 +7,9 @@ const props = defineProps<{
   message?: string
   askName?: boolean
   askUrl?: boolean
+  /** Ссылку можно не вводить. */
+  urlOptional?: boolean
+  urlLabel?: string
   name?: string
   url?: string
   okText?: string
@@ -38,7 +41,7 @@ function submit() {
         <input v-model="name" type="text" placeholder="например, Debian" autofocus />
       </label>
       <label v-if="askUrl">
-        Ссылка на образ (.img, .img.xz, .img.zst, .img.gz)
+        {{ urlLabel ?? 'Ссылка на образ (.img, .img.xz, .img.zst, .img.gz)' }}
         <input v-model="url" type="url" placeholder="https://download.napilinux.ru/…" :autofocus="!askName" />
       </label>
       <label>
@@ -48,7 +51,7 @@ function submit() {
       <p v-if="error" class="err">{{ error }}</p>
       <div class="actions">
         <button type="button" @click="$emit('cancel')">Отмена</button>
-        <button type="submit" class="warn" :disabled="busy || !password || (askUrl && !url) || (askName && !name)">
+        <button type="submit" class="warn" :disabled="busy || !password || (askUrl && !url && !urlOptional) || (askName && !name)">
           {{ okText ?? 'Подтвердить' }}
         </button>
       </div>

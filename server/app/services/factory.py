@@ -18,6 +18,7 @@ from ..db.database import Database, dumps, loads, now_iso, parse_iso, to_iso
 from ..scheduler.bootnet import BootNet, subnet_hosts
 from ..scheduler.net import Grant, NetScheduler
 from .catalog import CUSTOM, SD, ZERO, Catalog
+from .sdcard import SdCard
 from ..version import __version__
 
 log = logging.getLogger("napi.factory")
@@ -103,8 +104,14 @@ class Factory:
         # Образы ОС для SD-NAND и их наличие на тестовых microSD (по отчётам агентов)
         self.catalog = Catalog(settings, profile, db, self._catalog_changed)
         self.card_images: dict[int, dict[str, dict]] = {}   # device_id -> {file: {state, pct, detail}}
+        # Образ тестовой microSD для скачивания и пакет агента для автообновления карт
+        self.sdcard = SdCard(settings, profile, self._sd_changed)
+        self.card_agent: dict[int, dict] = {}                # device_id -> {agent_version, update, sd_image}
         self._catalog_dirty = False
         self._sync_allowed: bool | None = None
+
+    def _sd_changed(self) -> None:
+        self.summary_dirty = True
 
     def _catalog_changed(self) -> None:
         # Вызывается и из потока подготовки образа: только флаги, рассылка — в tick
@@ -380,12 +387,22 @@ class Factory:
                 if st.get("state") == "ready":
                     files[name] = files.get(name, 0) + 1
         variants = self.catalog.variants(files, len(online))
-        return {"menu": self.catalog.menu(variants), "variants": variants, "sync": bool(self._sync_allowed)}
+        menu = self.catalog.menu(variants)
+        if online and not any((self.card_agent.get(d) or {}).get("sd_image") for d in online):
+            # На новых картах (образ microSD со страницы «microSD») встроенного образа нет
+            menu = [m for m in menu if m["key"] != SD]
+        nos = {r["id"]: r["display_no"] for r in self.db.all(
+            "SELECT id, display_no FROM device WHERE id IN (" + ",".join("?" * len(online)) + ")", online)
+        } if online else {}
+        cards = [{"no": nos.get(d), **(self.card_agent.get(d) or {})} for d in online]
+        return {"menu": menu, "variants": variants, "sync": bool(self._sync_allowed),
+                "agent": self.sdcard.agent_view(cards)}
 
     # ------------------------------------------------------------------ образы ОС на картах
 
     def _catalog_msg(self) -> dict:
-        return {"type": "images", "sync": bool(self._sync_allowed), "images": self.catalog.agent_catalog()}
+        return {"type": "images", "sync": bool(self._sync_allowed), "images": self.catalog.agent_catalog(),
+                "agent": self.sdcard.agent_info()}
 
     async def push_catalog(self) -> None:
         msg = self._catalog_msg()
@@ -400,6 +417,12 @@ class Factory:
         """Выбор меню «ОС на SD-NAND» → параметры FLASH для агента и поля задания для отчёта."""
         key = options.get("os") or SD
         if key == SD:
+            missing = [d for d in device_ids if not (self.card_agent.get(d) or {}).get("sd_image", True)]
+            if missing:
+                nos = [str((self.db.one("SELECT display_no FROM device WHERE id = ?", (d,)) or {"display_no": d})
+                           ["display_no"]) for d in missing]
+                raise FactoryError("на microSD плат " + ", ".join(nos) + " нет встроенного образа:"
+                                   " выберите ОС из меню", 409)
             ver = self.profile.image_version
             return ({"os": SD, "os_name": "Образ на microSD"},
                     {"os_key": SD, "os_name": "Образ на microSD", "image_version": ver,
@@ -534,6 +557,9 @@ class Factory:
                          "server_time": time.time()})
         if isinstance(msg.get("images"), dict):
             self.card_images[device_id] = msg["images"]
+        sc = msg.get("sd_selfcheck") or {}
+        self.card_agent[device_id] = {"agent_version": msg.get("agent_version"), "update": msg.get("agent_update"),
+                                      "sd_image": sc.get("state") not in ("n/a",)}
         if self._sync_allowed is None:
             self._sync_allowed = self._sync_now()
         await conn.send(self._catalog_msg())
@@ -1284,10 +1310,12 @@ class Factory:
 
         self._bg = [asyncio.create_task(ticker()), asyncio.create_task(broadcaster())]
         self.catalog.start()
+        self.sdcard.start()
         if self.boot_method == "network":
             self._bg.append(asyncio.create_task(boot_watcher()))
 
     async def stop_background(self) -> None:
         await self.catalog.stop()
+        await self.sdcard.stop()
         for task in self._bg:
             task.cancel()

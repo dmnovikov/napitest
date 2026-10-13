@@ -36,6 +36,11 @@ python3 examples/simulated-agents/run.py --server ws://127.0.0.1:8080/ws/agent \
 скачивает образ в `NAPI_IMAGES_DIR` (по умолчанию `/var/lib/napi-factory/images`), проверяет и
 раздаёт на тестовые microSD между партиями. Подробно: docs/api.md, раздел 5.
 
+Тестовые microSD: страница «microSD» — образ для скачивания и прошивки через balenaEtcher
+(сервер собирает его сам из базы `NAPI_SD_BASE`, текущего агента и своего адреса). Агент на картах
+обновляется с сервера сам, между партиями. Инструкция оператора — страница «Инструкция» (открывается
+и без входа, печатается в PDF). Подробно: docs/api.md, раздел 6.
+
 Параметры симулятора: `--fail-rate` (доля заданий с ошибкой), `--drop-rate` (обрывы связи),
 `--boot-fail-rate` (платы без отчёта первой загрузки), `--speed`.
 
@@ -64,7 +69,8 @@ cd web    && npx vitest run && npm run build
 | `firstboot/` | `napi-firstboot-report` для финального образа (этап BOOT) |
 | `config/` | профиль `napi-c-rk3308.yaml`, пример окружения сервера |
 | `deploy/` | systemd-юнит, установка, avahi-сервис для mDNS, compose |
-| `scripts/build-test-sd.sh` | манифест образа и сборка дерева файлов тестовой microSD |
+| `scripts/make-sd-base.py` | база образа тестовой microSD из проверенной карты |
+| `scripts/build-test-sd.sh` | манифест образа и сборка дерева файлов тестовой microSD (ручной способ) |
 | `examples/simulated-agents/` | симулятор N плат |
 | `docs/` | [архитектура](docs/architecture.md), [API и протокол](docs/api.md), [microSD](docs/provisioning-sd.md), [порядок загрузки](docs/boot-order.md), [предохранители](docs/safety.md), [оператору](docs/operator-guide.md) |
 

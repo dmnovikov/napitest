@@ -193,6 +193,47 @@ export interface ImagesInfo {
   variants: OsVariant[]
   /** Карты сейчас могут скачивать образы (нет активной партии). */
   sync: boolean
+  agent?: AgentInfo
+}
+
+/** Программа на картах (агент): версия на сервере и сколько карт на связи уже с ней. */
+export interface AgentInfo {
+  version: string
+  current: number
+  online: number
+  errors: { no: number | null; detail: string | null }[]
+}
+
+export interface SdCardInfo {
+  image: {
+    file: string
+    sha256: string
+    size: number
+    image_size: number
+    version: string
+    agent_version: string
+    base_sha256: string
+    base_source: string | null
+    server_url: string | null
+    built_at: string
+  } | null
+  base: {
+    file: string
+    source: string | null
+    url: string | null
+    sha256: string
+    size: number
+    version?: string | null
+    set_at: string
+    operator: string | null
+  } | null
+  agent_version: string
+  server_url: string | null
+  progress: { stage: string; pct: number | null; text: string } | null
+  error: string | null
+  /** Агент или настройки новее собранного образа: идёт пересборка. */
+  stale: boolean
+  agent: AgentInfo
 }
 
 export interface ImageHistoryRow extends OsImage {

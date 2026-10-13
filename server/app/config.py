@@ -43,6 +43,11 @@ class Settings:
     public_url: str = ""
     # Образы ОС, подготовленные по ссылкам (меню «ОС на SD-NAND»); отсюда их скачивают карты
     images_dir: str = "/var/lib/napi-factory/images"
+    # База образа тестовой microSD (*.img.zst или ссылка), берётся при первом запуске; дальше —
+    # кнопка «Обновить образ microSD» на странице «microSD»
+    sd_base: str = ""
+    # Местные поправки профиля (YAML, сливается поверх профиля): например, временные пороги сети
+    profile_overrides: str = ""
     # Только для разработки: разрешить реальному агенту разрушающие операции, даже если
     # профиль не помечен hardware_validated. В production не задавать.
     destructive_override: bool = False
@@ -70,12 +75,21 @@ class Settings:
         s.discovery_port = int(env.get("NAPI_DISCOVERY_PORT", s.discovery_port))
         s.public_url = env.get("NAPI_PUBLIC_URL", "")
         s.images_dir = env.get("NAPI_IMAGES_DIR", s.images_dir)
+        s.sd_base = env.get("NAPI_SD_BASE", "")
+        s.profile_overrides = env.get("NAPI_PROFILE_OVERRIDES", "")
         s.destructive_override = _bool(env.get("NAPI_DESTRUCTIVE_OVERRIDE"))
         return s
 
     def validate(self) -> None:
         if not self.agent_token or len(self.agent_token) < 16:
             raise SystemExit("NAPI_AGENT_TOKEN обязателен (не короче 16 символов)")
+
+
+def _merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
 
 
 class Profile:
@@ -87,9 +101,13 @@ class Profile:
         self.hardware_validated: bool = bool(data.get("hardware_validated", False))
 
     @classmethod
-    def load(cls, path: str | Path) -> "Profile":
+    def load(cls, path: str | Path, overrides: str | Path | None = None) -> "Profile":
         with open(path, encoding="utf-8") as fh:
-            return cls(yaml.safe_load(fh))
+            data = yaml.safe_load(fh)
+        if overrides:
+            with open(overrides, encoding="utf-8") as fh:
+                data = _merge(data, yaml.safe_load(fh) or {})
+        return cls(data)
 
     def section(self, name: str) -> dict[str, Any]:
         return dict(self.data.get(name) or {})

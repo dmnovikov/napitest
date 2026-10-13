@@ -113,7 +113,8 @@
 {"type":"serial","job_id":"j_…","serial":"NC-2610-0017","batch":"B-20261010-01","date":"2026-10-10"}
 {"type":"serial","job_id":"j_…","error":"device has no TEST_PASS"}
 {"type":"identify","seconds":10}
-{"type":"images","sync":true,"images":[{"file":"armbian-3.img.zst","manifest":{…манифест…}}]}
+{"type":"images","sync":true,"images":[{"file":"armbian-3.img.zst","manifest":{…манифест…}}],
+ "agent":{"version":"3f9c1a0b7d2e","sha256":"…","size":151234}}
 {"type":"error","detail":"…"}
 ```
 
@@ -128,6 +129,11 @@
 ```
 
 `state`: `ready` | `waiting` | `downloading` | `error` (+`detail`). То же поле `images` есть в `hello`.
+
+`agent` в `images` — версия агента на сервере (раздел 6). `version` — хеш содержимого пакета
+`napi_factory_agent` (`selfupdate.tree_hash`), агент считает его у себя тем же способом и шлёт в `hello`
+как `agent_version: "0.1.0+<version>"`, а состояние обновления — в `agent_update`
+(`{"version", "state": "installing"|"restarting"|"error", "detail", "rolled_back"}`).
 
 Если в `hello` `cpuid == null`, сервер выдаёт `cpuid` вида `A<16 hex>` в `hello_ack`; агент сохраняет его на microSD и далее шлёт `id_source: "assigned"`.
 
@@ -298,3 +304,26 @@ Cookie-сессия обязательна. Сообщения сервер → 
 Запуск разрушающего режима с вариантом из меню проверяет, что образ готов на сервере и есть на картах
 всех выбранных плат (иначе 409 со списком плат). Задание хранит `os_key`, `os_name`, `image_file`
 (исходный файл), `image_url`, `image_sha256` — они попадают в карточку платы и CSV.
+
+## 6. Тестовая microSD и автообновление агента
+
+**Образ для скачивания** (страница «microSD»): база (тестовая Armbian, `*.img.zst`, задаётся
+`NAPI_SD_BASE` при первом запуске или ссылкой кнопкой «Обновить образ microSD») + агент из
+`agent/napi_factory_agent` + `/etc/napi-factory/agent.yaml` из `config/agent-napi-c.yaml`
+(`server_url` из `NAPI_PUBLIC_URL`, `token` из `NAPI_AGENT_TOKEN`) + `VERSION` + юнит агента. Файлы
+пишутся в ext4 первого раздела (MBR, тип 83) через `debugfs` без root; результат — `.img.xz` в
+`NAPI_IMAGES_DIR/sd/`. Пересборка — сама, когда меняются база, агент или настройки.
+База делается из проверенной карты: `scripts/make-sd-base.py` (описание в начале файла).
+
+REST: `GET /api/v1/sdcard` (состояние, прогресс, версии агента на картах), `POST /api/v1/sdcard`
+`{"password", "url"?}` (пересобрать / новая база по ссылке; пароль входа, запись в журнал),
+`GET /api/v1/sdcard/download` (файл образа, нужен вход).
+
+**Автообновление агента**: между партиями (`sync: true`) и без задания агент, у которого версия не
+совпадает с `agent.version`, скачивает `GET /api/v1/agent/update/<version>.tar.gz` (Bearer-токен),
+сверяет sha256 и хеш содержимого, проверяет запуском `python3 -m napi_factory_agent --help`,
+кладёт код в `/opt/napi-factory/agent/versions/<version>/`, атомарно переключает ссылку
+`/opt/napi-factory/agent/napi_factory_agent` и перезапускается (`execv`). Новая версия
+подтверждается на `hello_ack`; если до подтверждения агент перезапустился больше 3 раз, при
+следующем запуске ссылка возвращается на прежнюю версию, а новая заносится в `bad` (`update.json`)
+и больше не ставится. Хранятся две версии: текущая и прежняя.

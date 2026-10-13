@@ -13,12 +13,20 @@ export const router = createRouter({
     { path: '/batches/:id', component: () => import('./views/BatchDetailView.vue') },
     { path: '/audit', component: () => import('./views/AuditView.vue') },
     { path: '/images', component: () => import('./views/ImagesView.vue') },
+    { path: '/sdcard', component: () => import('./views/SdCardView.vue') },
+    { path: '/guide', component: () => import('./views/GuideView.vue'), meta: { public: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 
 router.beforeEach(async (to) => {
-  if (to.meta.public) return true
+  if (to.meta.public) {
+    if (!session.username && to.path !== '/login') {
+      // Инструкция открывается и без входа; если вход уже есть, показываем обычное меню
+      api.me().then((me) => (session.username = me.username), () => {})
+    }
+    return true
+  }
   if (session.username) return true
   try {
     const me = await api.me()

@@ -9,11 +9,14 @@ DST=/opt/napi-factory-test
 [[ -f "$SRC/web/dist/index.html" ]] || { echo "веб не установлен: cd web && npm ci && npm run build && cd .. && scripts/deploy-web.sh" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "нужен python3 >= 3.11" >&2; exit 1; }
 command -v iperf3 >/dev/null || echo "предупреждение: iperf3 не установлен, NET-этап реальных плат не пройдёт"
+for t in zstd xz debugfs e2fsck; do command -v $t >/dev/null || echo "предупреждение: нет $t (образы ОС и microSD)"; done
 
 id napi-factory >/dev/null 2>&1 || useradd --system --home /var/lib/napi-factory --shell /usr/sbin/nologin napi-factory
 mkdir -p "$DST" /etc/napi-factory /var/lib/napi-factory
-rsync -a --delete --exclude .venv --exclude node_modules --exclude __pycache__ \
+rsync -a --delete --exclude .venv --exclude node_modules --exclude __pycache__ --exclude .pytest_cache \
   "$SRC/server" "$SRC/config" "$SRC/firstboot" "$SRC/docs" "$DST/"
+# Агент: из него сервер собирает образ microSD и пакет автообновления карт
+mkdir -p "$DST/agent" && rsync -a --delete --exclude __pycache__ "$SRC/agent/napi_factory_agent" "$DST/agent/"
 mkdir -p "$DST/web" && rsync -a --delete "$SRC/web/dist" "$DST/web/"
 python3 -m venv "$DST/server/.venv"
 "$DST/server/.venv/bin/pip" install --quiet "$DST/server"

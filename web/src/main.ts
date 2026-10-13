@@ -7,7 +7,8 @@ import { session } from './session'
 import './style.css'
 
 setUnauthorizedHandler(() => {
-  if (router.currentRoute.value.path === '/login') return
+  // Страницы без входа (вход, инструкция) не уводят на вход
+  if (router.currentRoute.value.meta.public) return
   session.username = null
   stopLive()
   void router.replace({ path: '/login', query: { next: router.currentRoute.value.fullPath } })

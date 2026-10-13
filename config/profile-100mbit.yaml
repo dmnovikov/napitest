@@ -1,0 +1,5 @@
+# Местная поправка профиля для сервера на линке 100 Мбит/с (стенд разработки):
+# NAPI_PROFILE_OVERRIDES=config/profile-100mbit.yaml. Замеры TCP tx на таком линке 75–81 Мбит/с.
+net:
+  min_mbps: 60
+  max_parallel: 1

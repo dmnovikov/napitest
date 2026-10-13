@@ -36,6 +36,7 @@ async function submit() {
       <label>Пароль <input v-model="password" type="password" autocomplete="current-password" required /></label>
       <div v-if="error" class="err">{{ error }}</div>
       <button class="primary" type="submit" :disabled="busy">Войти</button>
+      <router-link class="guide" to="/guide">Инструкция оператора</router-link>
     </form>
   </div>
 </template>
@@ -71,5 +72,9 @@ input {
   padding: 7px 9px;
   border: 1px solid var(--line);
   border-radius: 6px;
+}
+.guide {
+  text-align: center;
+  font-size: 14px;
 }
 </style>

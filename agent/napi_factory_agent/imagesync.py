@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -162,6 +163,9 @@ class ImageSync:
         self._report()
         if not self.allowed or self._busy():
             return
+        up = getattr(self.agent, "updater", None)
+        if up is not None and up.needed():
+            await self._update(up)          # при успехе агент перезапускается и сюда не возвращается
         self._remove_stale(set(wanted))
         for file, man in wanted.items():
             if (self.status.get(file) or {}).get("state") == "ready":
@@ -179,6 +183,26 @@ class ImageSync:
             except SyncError as e:
                 log.warning("образ %s: %s", file, e)
                 self._set(file, "error", detail=str(e), force=True)
+
+    async def _update(self, up: Any) -> None:
+        """Новая версия агента с сервера (selfupdate): скачать, проверить, переключить, перезапуститься."""
+        from .selfupdate import UpdateError
+        try:
+            base = self.agent.link.http_base() if self.agent.link and hasattr(self.agent.link, "http_base") else None
+            if not base:
+                raise UpdateError("нет связи с сервером")
+            up.status = {"state": "installing", "detail": up.wanted["version"]}
+            data = await asyncio.to_thread(up.fetch, base, self.agent.cfg["token"])
+            await asyncio.to_thread(up.install, data)
+        except (UpdateError, OSError, subprocess.SubprocessError) as e:
+            log.warning("обновление агента: %s", e)
+            up.fail(str(e))
+            self.agent.link.send_soon(self.agent.hello())
+            return
+        up.status = {"state": "restarting", "detail": up.wanted["version"]}
+        self.agent.link.send_soon(self.agent.hello())
+        await asyncio.sleep(0.5)            # hello уходит на сервер до перезапуска
+        up.restart()
 
     def _remove_stale(self, keep: set[str]) -> None:
         try:

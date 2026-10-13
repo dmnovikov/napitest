@@ -27,11 +27,13 @@ async function logout() {
 
 <template>
   <div class="app">
-    <header v-if="route.path !== '/login'" class="nav">
+    <header v-if="route.path !== '/login' && session.username" class="nav">
       <span class="brand">NAPI Factory Test</span>
       <router-link to="/" exact-active-class="active">Платы</router-link>
       <router-link to="/batches" active-class="active">История партий</router-link>
       <router-link to="/images" active-class="active">Образы</router-link>
+      <router-link to="/sdcard" active-class="active">microSD</router-link>
+      <router-link to="/guide" active-class="active">Инструкция</router-link>
       <router-link to="/audit" active-class="active">Журнал</router-link>
       <span class="spacer" />
       <span class="conn" :class="live.connected ? 'on' : 'off'">

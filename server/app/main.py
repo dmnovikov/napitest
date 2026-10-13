@@ -37,7 +37,7 @@ class Core:
 
 
 def build_core(settings: Settings) -> Core:
-    profile = Profile.load(settings.profile_path)
+    profile = Profile.load(settings.profile_path, settings.profile_overrides or None)
     db = Database(settings.db_path)
     auth = AuthService(db, settings.session_hours)
     auth.ensure_operator(settings.admin_user, settings.admin_password)

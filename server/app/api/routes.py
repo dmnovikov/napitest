@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..services.catalog import CatalogError
 from ..services.factory import FactoryError
+from ..services.sdcard import SdError
 
 SESSION_COOKIE = "napi_session"
 
@@ -85,6 +86,11 @@ class ImageEditIn(BaseModel):
 class CustomIn(BaseModel):
     url: str
     password: str = ""
+
+
+class SdRebuildIn(BaseModel):
+    password: str = ""
+    url: str | None = None
 
 
 class BootOkIn(BaseModel):
@@ -312,6 +318,45 @@ def agent_image(name: str, request: Request):
     if path is None:
         raise HTTPException(404, "нет такого образа")
     return FileResponse(path, media_type="application/octet-stream")
+
+
+@router.get("/agent/update/{name}")
+def agent_update(name: str, request: Request):
+    """Пакет агента для автообновления карт (selfupdate на карте)."""
+    if not agent_token_ok(request, bearer(request)):
+        raise HTTPException(401, "неверный токен агента")
+    sd = core(request).factory.sdcard
+    if name != f"{sd.agent_version}.tar.gz":
+        raise HTTPException(404, "нет такой версии агента")
+    return Response(sd.agent_pkg, media_type="application/gzip")
+
+
+# ---------------------------------------------------------------------- тестовая microSD
+
+@router.get("/sdcard")
+def sdcard(request: Request, op: dict = Depends(operator)):
+    f = core(request).factory
+    return {**f.sdcard.view(), "agent": f.images_view()["agent"]}
+
+
+@router.post("/sdcard")
+def sdcard_rebuild(body: SdRebuildIn, request: Request, op: dict = Depends(operator)):
+    _confirm_password(request, op, body.password, "sd_rebuild")
+    f = core(request).factory
+    try:
+        f.sdcard.request(body.url, op["username"])
+    except SdError as exc:
+        return JSONResponse({"detail": str(exc), "extra": None}, status_code=exc.status)
+    f.audit(op["username"], "sd_rebuild", {"url": body.url} if body.url else None)
+    return {"ok": True}
+
+
+@router.get("/sdcard/download")
+def sdcard_download(request: Request, op: dict = Depends(operator)):
+    path = core(request).factory.sdcard.image_path()
+    if path is None:
+        raise HTTPException(404, "образ microSD ещё не собран")
+    return FileResponse(path, media_type="application/x-xz", filename=path.name)
 
 
 @router.post("/agent/boot_ok")

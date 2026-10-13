@@ -1,0 +1,25 @@
+# /etc/napi-factory/agent.yaml — тестовая microSD NAPI-C.
+# Шаблон для образа microSD, который собирает сервер (страница «microSD»): server_url и token
+# подставляет сервер (NAPI_PUBLIC_URL, NAPI_AGENT_TOKEN).
+server_url: ""                                 # пусто: сервер ищется сам (UDP-запрос в сеть, затем mDNS)
+discovery_port: 18089
+token: ""
+mdns: true
+state_dir: /var/lib/napi-factory
+queue_max_bytes: 33554432
+factory_dir: /opt/napi-factory
+heartbeat_s: 3
+led: rockpis:blue:user                         # проверено на NAPI-C 2026-10-10
+identity:
+  nvmem_path: /sys/bus/nvmem/devices/rockchip-otp0/nvmem
+  otp_offset: 7                                # проверено: cpuid в rockchip-otp0
+  otp_length: 16
+  known_clone_macs: []
+net:
+  iface: end0
+detect:
+  expected_controller: ff490000.mmc
+  require_controller_match: true
+  size_min_bytes: 3500000000
+  size_max_bytes: 4400000000
+  allowed_types: [MMC, SD]
