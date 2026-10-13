@@ -273,7 +273,94 @@ class Factory:
             "detail": job["detail"],
             "os_name": job["os_name"],
             "board_type": job["board_type"],
+            **self.job_eta(job, stages),
         }
+
+    # ------------------------------------------------------------------ прогноз времени
+
+    @staticmethod
+    def _eta_key(params: dict, stage: str) -> str:
+        """Варианты этапа, у которых разная длительность: сравниваются только задания с тем же вариантом."""
+        if stage == "ram":
+            return str((params.get("ram") or {}).get("memtester_max_mib"))
+        if stage == "net":
+            return str((params.get("net") or {}).get("method"))
+        if stage == "sdnand":
+            return str((params.get("sdnand") or {}).get("pattern"))
+        if stage == "flash":
+            f = params.get("flash") or {}
+            return f"{f.get('os')}:{f.get('image_version')}:{f.get('zero_full')}"
+        return ""
+
+    def stage_estimate(self, stage: str, key: str) -> float | None:
+        """Медиана длительности этапа по последним успешным заданиям с тем же вариантом (кэш на минуту)."""
+        cache = self.__dict__.setdefault("_eta_cache", {})
+        hit = cache.get((stage, key))
+        if hit and time.monotonic() - hit[0] < 60:
+            return hit[1]
+        rows = self.db.all(
+            "SELECT s.t, j.params_json FROM stage_result s JOIN job j ON j.id = s.job_id"
+            " WHERE s.stage = ? AND s.state = 'pass' AND s.t > 0 ORDER BY s.id DESC LIMIT 200", (stage,))
+        ts = sorted([r["t"] for r in rows if self._eta_key(loads(r["params_json"], {}) or {}, stage) == key][:30])
+        value = ts[len(ts) // 2] if ts else None
+        cache[(stage, key)] = (time.monotonic(), value)
+        return value
+
+    def job_eta(self, job, stages: dict) -> dict:
+        """Сколько ещё идти заданию: текущий этап — по проценту или по медиане, остальные — по медиане.
+        eta_partial: для части этапов истории ещё нет, прогноз занижен."""
+        if job["status"] not in ACTIVE_STATUSES:
+            return {}
+        params = loads(job["params_json"], {}) or {}
+        total, partial = 0.0, False
+        for name in STAGES:
+            st = stages.get(name) or {}
+            state = st.get("state")
+            if state not in ("pending", "running", "waiting"):
+                continue
+            est = self.stage_estimate(name, self._eta_key(params, name))
+            t = float(st.get("t") or 0)
+            if name == "boot" and state == "running":
+                # Ожидание загрузки: отсчёт от начала ожидания (оператор выключает плату, вынимает microSD)
+                deadline = parse_iso(job["boot_deadline"])
+                if deadline:
+                    t = self.profile.boot_timeout_s - (deadline - datetime.now(timezone.utc)).total_seconds()
+            elif state == "running" and not t:
+                # heartbeat не несёт время этапа: отсчёт от события stage_started
+                row = self.db.one("SELECT updated_at FROM stage_result WHERE job_id = ? AND stage = ?"
+                                  " AND state = 'running'", (job["id"], name))
+                since = parse_iso(row["updated_at"]) if row else None
+                t = (datetime.now(timezone.utc) - since).total_seconds() if since else 0
+            pct = st.get("pct")
+            if state == "running" and isinstance(pct, (int, float)) and pct >= 5 and t > 0:
+                left = t * (100 - pct) / pct
+            elif est is not None:
+                left = max(est - t, 0) if state != "pending" else est
+            else:
+                partial = True
+                continue
+            total += left
+        return {"eta_s": int(total), "eta_partial": partial}
+
+    def active_batches(self) -> list[dict]:
+        """Партии с незавершёнными заданиями: кто и когда запустил, сколько плат, когда закончится."""
+        rows = self.db.all(
+            "SELECT b.id, b.name, b.mode, b.kind, b.started_at, o.username, COUNT(j.id) AS boards"
+            " FROM job j JOIN batch b ON b.id = j.batch_id LEFT JOIN operator o ON o.id = b.operator_id"
+            " WHERE j.status IN ('queued','running','awaiting_boot') GROUP BY b.id ORDER BY b.id")
+        out = []
+        for r in rows:
+            eta, partial = 0, False
+            for job in self.db.all("SELECT * FROM job WHERE batch_id = ? AND status IN"
+                                   " ('queued','running','awaiting_boot')", (r["id"],)):
+                e = self.job_eta(job, self.job_stages(job))
+                eta = max(eta, e.get("eta_s") or 0)
+                partial = partial or bool(e.get("eta_partial"))
+            out.append({"batch_id": r["id"], "name": r["name"], "mode": r["mode"], "kind": r["kind"],
+                        "started_at": r["started_at"], "operator": r["username"], "boards": r["boards"],
+                        "eta_at": to_iso(datetime.now(timezone.utc) + timedelta(seconds=eta)),
+                        "eta_partial": partial})
+        return out
 
     def board_view(self, dev) -> dict:
         return {"type": board_of(dev), "detected": dev["board_detected"], "override": dev["board_override"],
@@ -404,6 +491,7 @@ class Factory:
             "hardware_validated": self.profile.hardware_validated,
             "expected": self.expected_boards(),
             "images": self.images_view(),
+            "active": self.active_batches(),
         }
 
     def images_view(self) -> dict:
@@ -441,7 +529,7 @@ class Factory:
         return self.db.one("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1") is None
 
     def resolve_os(self, options: dict, device_ids: list[int]) -> tuple[dict, dict]:
-        """Выбор меню «ОС на SD-NAND» → параметры FLASH для агента и поля задания для отчёта."""
+        """Выбор меню «ОС для внутреннего накопителя» → параметры FLASH для агента и поля задания для отчёта."""
         key = options.get("os") or SD
         if key == SD:
             missing = [d for d in device_ids if not (self.card_agent.get(d) or {}).get("sd_image", True)]

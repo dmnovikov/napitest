@@ -319,6 +319,7 @@ class Agent:
         job_id, mode, params = job["job_id"], job["mode"], job["params"]
         log.info("задание %s режим %s", job_id, mode)
         self.backend.on_job_start(job_id, mode)
+        self.backend.led_mode("normal")
         self.emit("job_started", {"mode": mode})
         shared: dict[str, Any] = {}
         cancelled = False
@@ -351,6 +352,8 @@ class Agent:
             job.update(finished=True, result=result, detail=detail, finished_ts=time.time())
             self.save()
         log.info("задание %s: %s %s", job_id, result, detail)
+        # Брак виден на стенде без экрана: светодиод часто мигает до выключения платы или нового задания
+        self.backend.led_mode("fail" if result == "fail" else "normal")
         self.emit("job_finished", {"result": result, "stages": job["stages"], "detail": detail})
         if self.link:
             self.link.send_soon(self.snapshot())

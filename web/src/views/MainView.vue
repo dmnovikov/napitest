@@ -9,7 +9,8 @@ import TopPanel from '../components/TopPanel.vue'
 import { api, links } from '../api/http'
 import { live } from '../api/live'
 import type { BoardType, DeviceView, Mode, RetestItem } from '../api/types'
-import { BOARD_NAME, MODE_LABEL, osLine } from '../lib/format'
+import { BOARD_NAME, MODE_LABEL, formatTime, osLine } from '../lib/format'
+import { session } from '../session'
 import { retestList } from '../lib/retest'
 
 const router = useRouter()
@@ -24,7 +25,7 @@ const fullMemtester = ref(false)
 const fullNet = ref(false)
 const skipBoot = ref(false)
 
-// Меню «ОС на SD-NAND»: по умолчанию первый пункт (Armbian); список ведёт сервер (страница «Образы»)
+// Меню «ОС для внутреннего накопителя»: по умолчанию первый пункт (Armbian); список ведёт сервер (страница «Образы»)
 const osMenu = computed(() => live.summary?.images?.menu ?? [])
 const osKey = ref('')
 const zeroFull = ref(false)
@@ -63,6 +64,16 @@ const message = ref<{ text: string; error: boolean; warn?: boolean } | null>(nul
 const selectedDevices = computed(() => devices.value.filter((d) => selected.value.has(d.device_id)))
 const anyLed = computed(() => selectedDevices.value.some((d) => d.has_led))
 const batchId = computed(() => live.summary?.batch?.batch_id ?? null)
+// Только что вошли, а на стенде уже идут тесты (возможно, другого тестировщика)
+const active = computed(() => live.summary?.active ?? [])
+const loginWarn = computed(() => session.freshLogin && active.value.length > 0)
+watch(
+  () => live.summary,
+  (s) => {
+    // Предупреждение показывается один раз после входа: если тестов нет — сразу снимаем флаг
+    if (s && !(s.active ?? []).length) session.freshLogin = false
+  },
+)
 
 // «Плат на стенде»: оператор вводит, сколько поставил; недостающие показываются пустыми местами
 const expected = computed(() => live.summary?.expected ?? 0)
@@ -257,7 +268,7 @@ function launch(mode: Mode) {
     return
   }
   if (osInfo.value.tone === 'error') {
-    say(`ОС на SD-NAND «${osItem.value?.name ?? '—'}»: ${osInfo.value.text}`, true)
+    say(`ОС для внутреннего накопителя «${osItem.value?.name ?? '—'}»: ${osInfo.value.text}`, true)
     return
   }
   const zero = osItem.value?.kind === 'zero'
@@ -272,7 +283,7 @@ function launch(mode: Mode) {
   ask({
     title: MODE_LABEL[mode],
     message:
-      `${shortageText()}Плат выбрано: ${ids.length}.\n${boardsLine(ids)}ОС на SD-NAND: ${osName.value}\n(${osInfo.value.text})\n` +
+      `${shortageText()}Плат выбрано: ${ids.length}.\n${boardsLine(ids)}ОС для внутреннего накопителя (SD-NAND): ${osName.value}\n(${osInfo.value.text})\n` +
       `${warn}\n${boot}\nПродолжить?`,
     okText: 'Запустить',
     danger: true,
@@ -286,11 +297,19 @@ function stop() {
     say('Нет активной партии и не выбраны платы', true)
     return
   }
-  const scope = ids.length ? `выбранных плат (${ids.length})` : `всей партии ${live.summary?.batch?.name ?? ''}`
+  const a = active.value.find((x) => x.batch_id === batchId.value)
+  const batchText = a
+    ? `ВСЕЙ партии ${a.name}: ${MODE_LABEL[a.mode] ?? a.mode}, плат: ${a.boards}, запущена в ${formatTime(a.started_at).slice(0, 5)}`
+    : `всей партии ${live.summary?.batch?.name ?? ''}`
+  const others = active.value.filter((x) => x.batch_id !== batchId.value)
+  const scope = ids.length ? `выбранных плат (${ids.length})` : batchText
   ask({
     title: 'Остановить',
     message:
       `Остановить задания ${scope}?\n` +
+      (!ids.length && active.value.length > 1
+        ? `Другие идущие партии (${others.map((x) => x.name).join(', ')}) не останавливаются.\n`
+        : '') +
       'До начала записи задание отменяется. Если запись SD-NAND уже идёт, она прерывается, ' +
       'плата получает статус interrupted и требует повторной прошивки.',
     okText: 'Остановить',
@@ -341,7 +360,7 @@ function identify() {
   if (!ids.length) return
   void guarded(async () => {
     for (const id of ids) await api.identify(id)
-    say(`Идентификация: ${ids.length} плат(ы) мигают 10 с`)
+    say(`Идентификация: у ${ids.length} плат(ы) светодиод горит непрерывно 10 с`)
   })
 }
 
@@ -366,7 +385,15 @@ function exportCsv() {
 
 <template>
   <div class="main">
-    <TopPanel :summary="live.summary" />
+    <div v-if="loginWarn" class="message warn active" @click="session.freshLogin = false">
+      <b>⚠ Осторожно: на стенде уже идут тесты.</b>
+      <div v-for="a in active" :key="a.batch_id">
+        Партия {{ a.name }} — {{ MODE_LABEL[a.mode] ?? a.mode }}, плат: {{ a.boards }}, запущена в
+        {{ formatTime(a.started_at).slice(0, 5) }}{{ a.operator ? ` (${a.operator})` : '' }}
+      </div>
+      <div>Не выбирайте эти платы и не нажимайте «Остановить» без выделения. Щёлкните, чтобы скрыть.</div>
+    </div>
+    <TopPanel :summary="live.summary" :devices="devices" />
 
     <div class="toolbar">
       <div class="group">
@@ -394,6 +421,8 @@ function exportCsv() {
             <option value="napi-p">NAPI-P</option>
           </select>
         </label>
+      </div>
+      <div class="group opts">
         <label class="chk" title="Запись и сверка всей SD-NAND (3,9 ГБ). Без галочки: 3 участка по 64 МБ, ~40 с. В «Тесты + прошивка» SD-NAND проверяется целиком всегда.">
           <input v-model="fullPattern" type="checkbox" /> Тотальная проверка SD-NAND (+12 мин, режим «Только тесты»)
         </label>
@@ -409,7 +438,7 @@ function exportCsv() {
       </div>
       <div class="group os">
         <label class="ossel">
-          ОС на SD-NAND:
+          ОС для внутреннего накопителя:
           <select v-model="osKey">
             <option v-for="m in osMenu" :key="m.key" :value="m.key">{{ m.name }}</option>
           </select>
@@ -514,6 +543,13 @@ function exportCsv() {
   color: var(--muted);
   margin-left: 4px;
 }
+.opts {
+  flex-basis: 100%;
+  gap: 4px 18px;
+}
+.opts .chk {
+  margin-left: 0;
+}
 .chk {
   font-size: 13px;
   margin-left: 10px;
@@ -602,6 +638,12 @@ function exportCsv() {
   border: 1px solid #bfe0c6;
   font-size: 14px;
   cursor: pointer;
+}
+.message.active {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 15px;
 }
 .message.warn {
   background: #fff6e0;

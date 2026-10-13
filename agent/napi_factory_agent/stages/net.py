@@ -35,7 +35,7 @@ def _read(base: Path, name: str) -> str | None:
 def run(ctx: StageCtx) -> StageResult:
     p = ctx.p
     be = ctx.backend
-    iface = p.get("iface", "end0")  # VALIDATE ON NAPI-C: имя интерфейса
+    iface = p.get("iface", "end0")  # CHECKED NAPI-C: end0
     base = Path(be.root) / "sys/class/net" / iface
     meas: dict[str, Any] = {"iface": iface}
 

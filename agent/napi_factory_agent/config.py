@@ -20,7 +20,7 @@ DEFAULTS: dict[str, Any] = {
     "factory_dir": "/opt/napi-factory",
     "heartbeat_s": 3.0,
     "identity": {
-        # VALIDATE ON NAPI-C: смещение и длина cpuid в OTP RK3308
+        # CHECKED NAPI-C: cpuid в OTP RK3308 по смещению 7 (config/agent-napi-c.yaml); здесь — по умолчанию
         "nvmem_path": "/sys/bus/nvmem/devices/rockchip-otp0/nvmem",
         "otp_offset": None,
         "otp_length": None,

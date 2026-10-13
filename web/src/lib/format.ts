@@ -287,7 +287,7 @@ export interface OsLine {
   tone: 'ok' | 'warn' | 'error'
 }
 
-/** Строка под меню «ОС на SD-NAND»: что именно будет записано и есть ли оно на картах. */
+/** Строка под меню «ОС для внутреннего накопителя»: что именно будет записано и есть ли оно на картах. */
 export function osLine(item: MenuItem | undefined, info: ImagesInfo | null | undefined, zeroFull = false): OsLine {
   if (!item) return { text: '', tone: 'error' }
   if (item.kind === 'sd') {
@@ -325,14 +325,77 @@ export function osLine(item: MenuItem | undefined, info: ImagesInfo | null | und
 export const BOARD_NAME: Record<string, string> = { 'napi-c': 'NAPI-C', 'napi-p': 'NAPI-P' }
 
 /** Метка типа платы на квадрате: ручной тип, не совпадающий с автоопределением, помечен ✎. */
-export function boardBadge(b: BoardInfo | null | undefined): { text: string; manual: boolean; title: string } | null {
+export type BoardTone = 'auto' | 'manual' | 'unknown'
+
+/** Значок типа платы: зелёный — распознан по подключению, жёлтый ✎ — задан вручную, жёлтый «тип ?» — не распознан. */
+export function boardBadge(
+  b: BoardInfo | null | undefined,
+): { text: string; manual: boolean; tone: BoardTone; title: string } | null {
   if (!b) return null
   const name = BOARD_NAME[b.type] ?? b.type
   const link = b.uplink ? `${b.uplink.iface}${b.uplink.driver ? ` (${b.uplink.driver})` : ''}` : 'агент не сообщил'
   const auto = b.detected ? (BOARD_NAME[b.detected] ?? b.detected) : 'не определён'
   const manual = !!b.override && b.override !== b.detected
-  const title = b.override
-    ? `${name}: задан вручную. Стенд определил: ${auto} (связь: ${link})`
-    : `${name}: определён по подключению (${link})`
-  return { text: manual ? `${name}✎` : name, manual, title }
+  if (b.override) {
+    return {
+      text: manual ? `${name}✎` : name,
+      manual,
+      tone: manual ? 'manual' : 'auto',
+      title: `${name}: задан вручную. Стенд определил: ${auto} (связь: ${link})`,
+    }
+  }
+  if (!b.detected) {
+    return {
+      text: 'тип ?',
+      manual: false,
+      tone: 'unknown',
+      title: `Тип платы не распознан (связь: ${link}). Проверяется как ${name}. Если это не так — выделите и задайте «Тип платы».`,
+    }
+  }
+  return { text: name, manual: false, tone: 'auto', title: `${name}: распознан по подключению (${link})` }
+}
+
+/** Строка в верхней панели: распознан ли тип у всех плат на связи. */
+export function boardsSummary(
+  devices: { online: boolean; display_no: number; board?: BoardInfo }[],
+): { text: string; tone: 'ok' | 'warn' } | null {
+  const on = devices.filter((d) => d.online && d.board)
+  if (!on.length) return null
+  const count: Record<string, number> = {}
+  const unknown: number[] = []
+  const manual: number[] = []
+  for (const d of on) {
+    const b = boardBadge(d.board)!
+    if (b.tone === 'unknown') unknown.push(d.display_no)
+    else count[d.board!.type] = (count[d.board!.type] ?? 0) + 1
+    if (b.tone === 'manual') manual.push(d.display_no)
+  }
+  const kinds = Object.entries(count)
+    .map(([t, n]) => `${BOARD_NAME[t] ?? t}: ${n}`)
+    .join(', ')
+  const man = manual.length ? ` · вручную: №${manual.join(', №')}` : ''
+  if (unknown.length) {
+    return {
+      text: `Тип платы не распознан: ${unknown.length} из ${on.length} (№${unknown.join(', №')})${kinds ? ` · ${kinds}` : ''}${man}`,
+      tone: 'warn',
+    }
+  }
+  return { text: `Тип платы распознан у всех: ${kinds}${man}`, tone: manual.length ? 'warn' : 'ok' }
+}
+
+/** «осталось ~N мин» под квадратом; ≥ — для части этапов ещё нет истории (первые задания). */
+export function etaText(job: JobView | null | undefined): string {
+  if (!job || job.eta_s === null || job.eta_s === undefined) return ''
+  if (!['queued', 'running', 'awaiting_boot'].includes(job.status)) return ''
+  if (job.eta_partial && job.eta_s < 30) return ''
+  const min = Math.ceil(job.eta_s / 60)
+  const sign = job.eta_partial ? '≥' : '~'
+  return job.eta_s < 60 ? `осталось ${job.eta_partial ? '≥' : '<'}1 мин` : `осталось ${sign}${min} мин`
+}
+
+/** Короткая запись MAC для узких квадратов: последние 3 байта. */
+export function shortMac(mac: string | null | undefined): string {
+  if (!mac) return ''
+  const p = mac.split(':')
+  return p.length === 6 ? '…' + p.slice(3).join(':') : mac
 }

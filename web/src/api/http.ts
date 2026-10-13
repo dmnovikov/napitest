@@ -9,6 +9,7 @@ import type {
   SdCardInfo,
   BoardType,
   Mode,
+  PublicStatus,
   Summary,
 } from './types'
 
@@ -97,6 +98,7 @@ export const api = {
   setBoard: (device_ids: number[], board: BoardType | null) =>
     request<{ warnings: string[] }>('PUT', '/devices/board', { device_ids, board }),
   sdcard: () => request<SdCardInfo>('GET', '/sdcard'),
+  publicStatus: () => request<PublicStatus>('GET', '/public'),
   sdRebuild: (password: string, url?: string) =>
     request<unknown>('POST', '/sdcard', { password, url: url || null }),
 }

@@ -65,7 +65,7 @@ def parse_mountinfo(text: str) -> list[dict[str, str]]:
     return out
 
 
-# VALIDATE ON NAPI-C: путь sysfs SD-NAND (.../<ctrl>/mmc_host/mmcN/...) и тип карты (SD/MMC)
+# CHECKED NAPI-C (mmcblk0 на ff490000.mmc, type SD): путь sysfs SD-NAND (.../<ctrl>/mmc_host/mmcN/...) и тип карты (SD/MMC)
 def _controller_from_path(real: str) -> str | None:
     # .../platform/ff490000.mmc/mmc_host/mmc0/mmc0:0001
     parts = real.split(os.sep)

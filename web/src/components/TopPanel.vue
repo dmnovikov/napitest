@@ -1,10 +1,23 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Summary } from '../api/types'
+import type { DeviceView, Summary } from '../api/types'
 import { now } from '../lib/clock'
-import { MODE_LABEL, formatDuration, formatTime, secondsSince } from '../lib/format'
+import { MODE_LABEL, boardsSummary, formatDuration, formatTime, secondsSince } from '../lib/format'
 
-const props = defineProps<{ summary: Summary | null }>()
+const props = defineProps<{ summary: Summary | null; devices: DeviceView[] }>()
+
+const hhmm = (iso: string) => formatTime(iso).slice(0, 5)
+const boards = computed(() => boardsSummary(props.devices))
+// Прогноз окончания текущей партии (по длительности этапов прошлых проверок)
+const eta = computed(() => {
+  const b = props.summary?.batch
+  const a = props.summary?.active?.find((x) => x.batch_id === b?.batch_id)
+  if (!a?.eta_at) return null
+  const soon = Date.parse(a.eta_at) - now.value < 60000
+  // Истории ещё нет и считать не по чему: не показываем «не раньше <сейчас>»
+  if (a.eta_partial && soon) return { text: 'прогноз после первых проверок', muted: true }
+  return { text: `${a.eta_partial ? 'не раньше' : '~ в'} ${hhmm(a.eta_at)}`, muted: false }
+})
 
 const elapsed = computed(() => {
   const b = props.summary?.batch
@@ -50,12 +63,17 @@ const counters = computed(() => {
         <span class="lbl">Оператор:</span> {{ summary?.batch?.operator ?? summary?.operator ?? '—' }}
         <span class="lbl">Старт:</span> {{ formatTime(summary?.batch?.started_at) }}
         <span class="lbl">Прошло:</span> <span class="mono">{{ formatDuration(elapsed) }}</span>
+        <template v-if="eta">
+          <span class="lbl">Закончится:</span>
+          <b class="eta" :class="{ muted: eta.muted }" title="Прогноз по длительности этапов прошлых проверок; BOOTCHECK зависит от того, когда плату перезагрузят">{{ eta.text }}</b>
+        </template>
       </div>
       <div>
         <span class="lbl">microSD:</span>
         <span class="mono">{{ summary?.versions.test_sd?.length ? summary.versions.test_sd.join(', ') : '—' }}</span>
         <span class="lbl">Образ:</span> <span class="mono">{{ summary?.versions.image ?? '—' }}</span>
       </div>
+      <div v-if="boards" class="boards" :class="boards.tone">{{ boards.tone === 'ok' ? '✓' : '⚠' }} {{ boards.text }}</div>
     </div>
   </div>
 </template>
@@ -139,6 +157,27 @@ const counters = computed(() => {
   padding: 0 8px;
   font-size: 11px;
   margin-left: 6px;
+}
+.eta {
+  color: #6b5200;
+}
+.eta.muted {
+  color: var(--muted);
+  font-weight: normal;
+}
+.boards {
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 4px;
+  align-self: flex-start;
+}
+.boards.ok {
+  color: #13692f;
+  background: #e3f4e8;
+}
+.boards.warn {
+  color: #6b4500;
+  background: #fff1c2;
 }
 .sub {
   font-size: 10px;

@@ -41,14 +41,14 @@
 - В «Только прошивка» серийник выдаётся только плате с TEST_PASS в истории (`flash.flash_only_requires_tested`).
 - Симулированные агенты отклоняются, если не задан `NAPI_ALLOW_SIMULATED=1`.
 
-## 5. Что помечено `VALIDATE ON NAPI-C`
+## 5. Проверено на плате (`CHECKED`)
 
-`grep -rn "VALIDATE" agent firstboot config` показывает все места. Главные:
+Места, зависящие от железа, проверены на NAPI-C и помечены `CHECKED` (`grep -rn "CHECKED" agent config`):
 
-- контроллер SD-NAND (`ff490000.mmc` по `rk3308.dtsi`) и тип карты в `device/type`;
-- источник cpuid: `/proc/device-tree/serial-number` или смещение/длина в `rockchip-otp0`;
-- источник MAC (`addr_assign_type`), имя интерфейса `end0`;
-- формат вывода kernel memtest в dmesg и наличие `CONFIG_MEMTEST`;
-- поддержка `BLKFLSBUF` и `O_DIRECT` контроллером mmc;
-- место provision-записи (сейчас `tail-json` по смещению `align_up(image_size, 1 MiB)`; финальный образ должен перенести её в `/etc/napi-factory/provision.json` до расширения rootfs);
-- LED для «Идентифицировать».
+- контроллер SD-NAND `ff490000.mmc` и тип карты SD в `device/type`;
+- cpuid в `rockchip-otp0` (смещение 7, длина 16), MAC `end0` от U-Boot;
+- вывод kernel memtest в dmesg и `CONFIG_MEMTEST`;
+- `BLKFLSBUF` и `O_DIRECT` на mmc (прошивка со сверкой проходит);
+- светодиод `rockpis:blue:user` (брак, «Идентифицировать»).
+
+Осталось `VALIDATE`: место provision-записи `tail-json` (устаревший способ, `stages/flash.py`).

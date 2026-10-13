@@ -33,8 +33,12 @@ export interface JobView {
   result: string | null
   detail?: string | null
   warnings_count?: number | null
-  /** Что шили на SD-NAND (меню «ОС на SD-NAND»). */
+  /** Что шили на SD-NAND (меню «ОС для внутреннего накопителя»). */
   os_name?: string | null
+  /** Прогноз: сколько секунд ещё идти заданию (только у незавершённых). */
+  eta_s?: number | null
+  /** Для части этапов ещё нет истории: прогноз занижен. */
+  eta_partial?: boolean | null
 }
 
 export interface DeviceView {
@@ -101,8 +105,10 @@ export interface Summary {
   pass_warn?: number | null
   /** Сколько плат оператор поставил на стенд (0: не задано). */
   expected?: number | null
-  /** Меню «ОС на SD-NAND» и образы. */
+  /** Меню «ОС для внутреннего накопителя» и образы. */
   images?: ImagesInfo | null
+  /** Партии, у которых ещё идут задания. */
+  active?: ActiveBatch[] | null
   batch: BatchInfo | null
   versions: { test_sd: string[]; image: string | null; server: string | null }
   operator: string | null
@@ -319,4 +325,24 @@ export interface PreviousResult {
   batch: string | null
   detail: string | null
   warnings_count?: number
+}
+
+/** Партия с незавершёнными заданиями: предупреждение «идут тесты» и прогноз окончания. */
+export interface ActiveBatch {
+  batch_id: number
+  name: string
+  mode: Mode
+  kind: 'production' | 'golden'
+  started_at: string | null
+  operator: string | null
+  boards: number
+  eta_at: string | null
+  /** Для части этапов ещё нет истории: окончание не раньше eta_at. */
+  eta_partial?: boolean
+}
+
+/** Без входа: что идёт на стенде и образ microSD для инструкции. */
+export interface PublicStatus {
+  active: ActiveBatch[]
+  sd_image: { file: string; size: number; version: string; built_at: string; sha256: string } | null
 }

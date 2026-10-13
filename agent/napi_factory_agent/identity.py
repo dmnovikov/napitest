@@ -87,7 +87,7 @@ def read_cpuid(root: str | os.PathLike, ident_cfg: dict[str, Any],
 def read_mac(root: str | os.PathLike, iface: str, known_clone_macs: list[str]) -> dict[str, Any]:
     """MAC интерфейса и его источник.
 
-    VALIDATE ON NAPI-C: вендорный U-Boot выводит ethaddr из cpuid; ядро видит такой адрес как
+    CHECKED NAPI-C (end0): вендорный U-Boot выводит ethaddr из cpuid; ядро видит такой адрес как
     addr_assign_type=0 с битом locally administered. Случайный MAC (assign_type=1) у клонов
     карт приводит к неуникальности после перезагрузки.
     """
@@ -117,7 +117,7 @@ def read_mac(root: str | os.PathLike, iface: str, known_clone_macs: list[str]) -
 def regenerate_machine_id(root: str = "/") -> bool:
     """Регенерация /etc/machine-id на клонированной карте (только реальный бэкенд).
 
-    VALIDATE ON NAPI-C: systemd-machine-id-setup присутствует в тестовой Armbian.
+    CHECKED NAPI-C: systemd-machine-id-setup присутствует в тестовой Armbian.
     """
     mid = Path(root) / "etc/machine-id"
     try:

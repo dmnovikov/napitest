@@ -7,10 +7,12 @@ import {
   TILE_LABEL,
   boardBadge,
   currentStageLine,
+  etaText,
   formatAgo,
   jobHasWarn,
   jobWarnings,
   previousText,
+  shortMac,
   tileClass,
   tileTag,
   tileTimer,
@@ -37,6 +39,9 @@ const line = computed(() => {
 })
 const lineTitle = computed(() => (passWarn.value ? warns.value.join('\n') || 'есть замечания' : line.value))
 const timer = computed(() => tileTimer(shownJob.value, now.value))
+const eta = computed(() => (props.device.tile === 'awaiting_boot' ? '' : etaText(shownJob.value)))
+// MAC интерфейса связи со стендом (у NAPI-P — USB-адаптера), иначе MAC платы
+const mac = computed(() => props.device.board?.uplink?.mac ?? props.device.mac ?? null)
 const failLine = computed(() => {
   const st = shownJob.value?.stages ?? {}
   return Object.values(st).some((s) => s && (s.state === 'fail' || s.state === 'error'))
@@ -47,6 +52,7 @@ const title = computed(() => {
     `№${d.display_no} ${d.serial ?? ''}`,
     `cpuid: ${d.cpuid ?? '—'}`,
     `IP: ${d.ip ?? '—'}`,
+    `MAC: ${mac.value ?? '—'}${d.board?.uplink?.mac && d.board.uplink.mac !== d.mac ? ' (USB-адаптер)' : ''}`,
     ...(board.value ? [`Плата: ${board.value.title}`] : []),
     `Состояние: ${TILE_LABEL[d.tile] ?? d.tile}${complete.value ? ' — тесты и прошивка пройдены' : ''}${bootChecked.value ? ', BOOTCHECK пройден' : ''}`,
   ].join('\n')
@@ -66,13 +72,18 @@ const title = computed(() => {
       <span v-if="device.tested_before" class="seen" title="Плата уже проверялась, есть в базе">↻</span>
       <span class="tag">{{ tileTag(device) }}</span>
       <span class="badges">
-        <span v-if="board" class="badge board" :class="{ manual: board.manual }" :title="board.title">{{ board.text }}</span>
+        <span v-if="board" class="badge board" :class="'b-' + board.tone" :title="board.title">{{ board.text }}</span>
         <span v-if="bootChecked" class="badge bootok" title="BOOTCHECK пройден: загрузка с SD-NAND проверена">✓</span>
         <span v-if="device.is_golden" class="badge golden" title="Golden sample">★</span>
         <span v-if="device.simulated" class="badge sim" title="Симулированный агент">SIM</span>
         <span v-if="device.tile === 'interrupted'" class="badge bang" title="Прервано">!</span>
         <span v-if="device.tile === 'incomplete'" class="badge bang" title="Не выполнено: тест запрещён, это не дефект платы">—</span>
       </span>
+    </div>
+    <div v-if="device.ip || mac" class="row net" :title="`IP ${device.ip ?? '—'} · MAC ${mac ?? '—'}`">
+      <span class="ip">{{ device.ip ?? '—' }}</span>
+      <span v-if="mac" class="mac full">{{ mac }}</span>
+      <span v-if="mac" class="mac short">{{ shortMac(mac) }}</span>
     </div>
     <StageBar :job="shownJob" labels />
     <div v-if="prev" class="prev" :class="'prev-' + prev.status" :title="prevLine">{{ prevLine }}</div>
@@ -81,6 +92,7 @@ const title = computed(() => {
     </div>
     <div class="row foot">
       <span :class="{ countdown: timer.countdown }">{{ timer.text }}</span>
+      <span v-if="eta" class="eta" title="Прогноз по длительности этапов прошлых проверок">{{ eta }}</span>
       <span v-if="device.tile === 'offline'" class="ago">{{ formatAgo(device.last_seen, now) }}</span>
       <span v-else-if="device.tile === 'awaiting_boot'" class="ago">ждём BOOT</span>
     </div>
@@ -116,17 +128,49 @@ const title = computed(() => {
 .tile-awaiting_boot {
   border-color: var(--yellow);
 }
-.badge.board {
-  font-size: 10px;
-  padding: 0 4px;
-  border-radius: 3px;
-  background: #eceef1;
-  color: #4b5563;
-  font-weight: 600;
+.tile {
+  container-type: inline-size;
 }
-.badge.board.manual {
-  background: #fff1c2;
-  color: #8a5a00;
+.badge.board {
+  font-size: 11.5px;
+  padding: 0 5px;
+  line-height: 17px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.badge.board.b-auto {
+  background: var(--green);
+  color: #fff;
+}
+.badge.board.b-manual,
+.badge.board.b-unknown {
+  background: #ffe08a;
+  color: #6b4500;
+  border: 1px solid #e3b23c;
+}
+.net {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  justify-content: space-between;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.net .mac.short {
+  display: none;
+}
+@container (max-width: 212px) {
+  .net .mac.full {
+    display: none;
+  }
+  .net .mac.short {
+    display: inline;
+  }
+}
+.eta {
+  font-family: var(--font);
+  font-size: 11.5px;
+  color: #6b5200;
 }
 .tile-pass {
   border-color: var(--green);

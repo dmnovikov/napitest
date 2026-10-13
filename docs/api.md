@@ -119,7 +119,7 @@
 ```
 
 `images` — что должно лежать на тестовой microSD в `/opt/napi-factory/images/catalog/` (меню
-«ОС на SD-NAND», раздел 5). Приходит после `hello_ack` и при каждом изменении. `sync: false` — идёт
+«ОС для внутреннего накопителя», раздел 5). Приходит после `hello_ack` и при каждом изменении. `sync: false` — идёт
 партия, качать нельзя (скачивание мешает тесту сети и записи SD-NAND). Агент скачивает недостающие
 файлы `GET /api/v1/agent/images/{file}` (Bearer-токен агента, докачка по `Range`), сверяет
 `compressed_sha256`, удаляет лишние и сообщает состояние:
@@ -220,7 +220,8 @@ Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os"
 | POST | `/auth/login` | вход |
 | POST | `/auth/logout` | выход |
 | GET | `/auth/me` | `{"username"}` |
-| GET | `/state` | полный снимок для главного экрана (как `snapshot` в UI WS) |
+| GET | `/state` | полный снимок для главного экрана (как `snapshot` в UI WS); у незавершённых заданий `eta_s`/`eta_partial` (прогноз по медиане этапов прошлых заданий того же варианта), в `summary.active` — идущие партии с `eta_at` |
+| GET | `/public` | без входа: `{"active":[…идущие партии…],"sd_image":{file,size,version,built_at,sha256}|null}` — предупреждение на странице входа и ссылка на образ в инструкции |
 | POST | `/batches` | запуск: `{"mode","device_ids":[…],"confirm":true,"kind":"production"|"golden","options":{"sdnand_pattern":"quick"|"full","memtester":"quick"|"full","net":"quick"|"full","boot":"check"|"skip","os":"<key>"|"zero"|"sd"|"custom","zero":"quick"|"full"}}` (net full: ещё TCP iperf3; quick: только UDP-поток на udp_rate_mbps по udp_seconds в каждую сторону) |
 | POST | `/batches/{id}/stop` | «Остановить»: `{"device_ids":[…]}` (пусто = вся партия) |
 | POST | `/stop` | «Остановить» для выбранных плат: `{"device_ids":[…]}` |
@@ -234,7 +235,7 @@ Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os"
 | GET | `/jobs/{job_id}` | задание: этапы, измерения, лог, события |
 | GET | `/audit` | журнал действий |
 | PUT | `/expected` | `{"count": N}`: сколько плат на стенде (0: не задано); в Summary поле `expected` |
-| GET | `/images` | меню «ОС на SD-NAND», варианты с текущим и готовящимся образом, история (раздел 5) |
+| GET | `/images` | меню «ОС для внутреннего накопителя», варианты с текущим и готовящимся образом, история (раздел 5) |
 | POST | `/images` | добавить ОС: `{"name","url","password"}` |
 | PUT | `/images/{key}` | `{"password", "url"?, "name"?, "visible"?, "move": -1|1}` |
 | POST | `/images/custom` | образ клиента (одноразовый): `{"url","password"}` |
@@ -284,7 +285,7 @@ Cookie-сессия обязательна. Сообщения сервер → 
 {"type":"summary","summary":Summary}
 ```
 
-## 5. Меню «ОС на SD-NAND» (образы)
+## 5. Меню «ОС для внутреннего накопителя» (образы)
 
 Пункты меню (первый — выбор по умолчанию в веб-интерфейсе):
 
@@ -317,7 +318,7 @@ Cookie-сессия обязательна. Сообщения сервер → 
 
 REST: `GET /api/v1/sdcard` (состояние, прогресс, версии агента на картах), `POST /api/v1/sdcard`
 `{"password", "url"?}` (пересобрать / новая база по ссылке; пароль входа, запись в журнал),
-`GET /api/v1/sdcard/download` (файл образа, нужен вход).
+`GET /api/v1/sdcard/download` (файл образа, без входа: ссылка есть в инструкции оператора).
 
 **Автообновление агента**: между партиями (`sync: true`) и без задания агент, у которого версия не
 совпадает с `agent.version`, скачивает `GET /api/v1/agent/update/<version>.tar.gz` (Bearer-токен),

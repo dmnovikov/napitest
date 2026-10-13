@@ -20,7 +20,7 @@ class TargetMismatch(Exception):
     pass
 
 
-# VALIDATE ON NAPI-C: BLKFLSBUF и O_DIRECT на mmc-контроллере RK3308 (readback идёт с носителя)
+# CHECKED NAPI-C: BLKFLSBUF и O_DIRECT на mmc-контроллере RK3308 (прошивка со сверкой проходит) (readback идёт с носителя)
 class BlockTarget:
     """Открытое целевое устройство. Писать через write_at, читать через read_at."""
 

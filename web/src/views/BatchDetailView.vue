@@ -66,7 +66,7 @@ function sdv(v: unknown) {
         <tr><th>Оператор</th><td>{{ data.batch.operator ?? '—' }}</td></tr>
         <tr><th>Время</th><td>{{ formatDateTime(data.batch.started_at) }} — {{ formatDateTime(data.batch.finished_at) }}</td></tr>
         <tr><th>Версии</th><td>microSD <span class="mono">{{ sdv(data.batch.test_sd_versions) }}</span>, образ <span class="mono">{{ data.batch.image_version ?? '—' }}</span></td></tr>
-        <tr v-if="data.batch.os"><th>ОС на SD-NAND</th><td>{{ data.batch.os }}</td></tr>
+        <tr v-if="data.batch.os"><th>ОС для внутреннего накопителя</th><td>{{ data.batch.os }}</td></tr>
         <tr><th>Итог</th><td>плат {{ data.batch.total }}, <span class="pass">PASS {{ data.batch.pass }}</span>, <span class="fail">FAIL {{ data.batch.fail }}</span>, golden: {{ data.batch.golden ?? '—' }}</td></tr>
         <tr><th>Экспорт</th><td><a :href="links.batchCsv(data.batch.batch_id)">CSV</a> · <a :href="links.batchJson(data.batch.batch_id)">JSON</a></td></tr>
       </table>

@@ -183,11 +183,38 @@ describe('boardBadge', () => {
     expect(boardBadge({ type: 'napi-p', detected: 'napi-p', override: null, uplink: usb })).toEqual({
       text: 'NAPI-P',
       manual: false,
-      title: 'NAPI-P: определён по подключению (enx00e04c680001 (r8152))',
+      tone: 'auto',
+      title: 'NAPI-P: распознан по подключению (enx00e04c680001 (r8152))',
     })
     const m = boardBadge({ type: 'napi-c', detected: 'napi-p', override: 'napi-c', uplink: usb })
     expect(m?.text).toBe('NAPI-C✎')
     expect(m?.title).toContain('Стенд определил: NAPI-P')
+    expect(m?.tone).toBe('manual')
+    expect(boardBadge({ type: 'napi-c', detected: null, override: null, uplink: null })?.text).toBe('тип ?')
     expect(boardBadge(undefined)).toBeNull()
+  })
+
+  it('summarises recognition for the top panel', async () => {
+    const { boardsSummary } = await import('./format')
+    const c = { type: 'napi-c' as const, detected: 'napi-c' as const, override: null, uplink: null }
+    const p = { type: 'napi-p' as const, detected: 'napi-p' as const, override: null, uplink: null }
+    const u = { type: 'napi-c' as const, detected: null, override: null, uplink: null }
+    expect(boardsSummary([{ online: true, display_no: 1, board: c }, { online: true, display_no: 2, board: p }]))
+      .toEqual({ text: 'Тип платы распознан у всех: NAPI-C: 1, NAPI-P: 1', tone: 'ok' })
+    const w = boardsSummary([{ online: true, display_no: 1, board: c }, { online: true, display_no: 3, board: u }])
+    expect(w?.tone).toBe('warn')
+    expect(w?.text).toContain('не распознан: 1 из 2 (№3)')
+    expect(boardsSummary([])).toBeNull()
+  })
+})
+
+describe('etaText', () => {
+  it('shows remaining minutes for active jobs only', async () => {
+    const { etaText } = await import('./format')
+    const j = (status: string, eta_s: number, eta_partial = false) => ({ status, eta_s, eta_partial }) as never
+    expect(etaText(j('running', 430))).toBe('осталось ~8 мин')
+    expect(etaText(j('running', 40))).toBe('осталось <1 мин')
+    expect(etaText(j('running', 300, true))).toBe('осталось ≥5 мин')
+    expect(etaText(j('pass', 300))).toBe('')
   })
 })

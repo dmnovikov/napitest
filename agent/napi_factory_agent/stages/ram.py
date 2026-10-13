@@ -12,7 +12,7 @@ _BAD = re.compile(r"(bad mem addr|bad memory)", re.I)
 _MEMTEST_RANGE = re.compile(r"^\s*(\[[^\]]*\]\s*)?0x[0-9a-f]+\s*-\s*0x[0-9a-f]+\s+pattern", re.I)
 
 
-# VALIDATE ON NAPI-C: формат вывода CONFIG_MEMTEST тестового ядра
+# CHECKED NAPI-C: формат вывода CONFIG_MEMTEST тестового ядра («early_memtest: # of tests: 4»)
 def parse_kernel_memtest(dmesg: str) -> dict:
     """Разбор вывода CONFIG_MEMTEST.
 

@@ -7,16 +7,16 @@ state_dir: /var/lib/napi-factory              # записываемый раз�
 queue_max_bytes: 33554432
 factory_dir: /opt/napi-factory                # images/, agent/, VERSION
 heartbeat_s: 3
-# led: "led-name"                             # VALIDATE ON NAPI-C: имя LED в /sys/class/leds для «Идентифицировать»
+# led: "led-name"                             # CHECKED NAPI-C: rockpis:blue:user — брак (частое мигание) и «Идентифицировать»
 identity:
   nvmem_path: /sys/bus/nvmem/devices/rockchip-otp0/nvmem
   otp_offset: 7                               # CHECKED на NAPI-C: cpuid в rockchip-otp0, 16 байт
   otp_length: 16
   known_clone_macs: []
 net:
-  iface: end0                                 # VALIDATE ON NAPI-C
+  iface: end0                                 # CHECKED NAPI-C
 detect:                                       # только для inventory в hello; при задании правила из профиля сервера
-  expected_controller: ff490000.mmc           # VALIDATE ON NAPI-C
+  expected_controller: ff490000.mmc           # CHECKED NAPI-C
   require_controller_match: true
   size_min_bytes: 3500000000
   size_max_bytes: 4400000000

@@ -41,7 +41,7 @@ class Settings:
     # сервер за NAT/прокси (пусто: свой IP на интерфейсе запрашивающего)
     discovery_port: int = 18089
     public_url: str = ""
-    # Образы ОС, подготовленные по ссылкам (меню «ОС на SD-NAND»); отсюда их скачивают карты
+    # Образы ОС, подготовленные по ссылкам (меню «ОС для внутреннего накопителя»); отсюда их скачивают карты
     images_dir: str = "/var/lib/napi-factory/images"
     # База образа тестовой microSD (*.img.zst или ссылка), берётся при первом запуске; дальше —
     # кнопка «Обновить образ microSD» на странице «microSD»
@@ -151,7 +151,7 @@ class Profile:
 
     def job_params(self, mode: str, options: dict[str, Any] | None, destructive_override: bool,
                    os_flash: dict[str, Any] | None = None) -> dict[str, Any]:
-        """os_flash: что писать на SD-NAND (выбор меню «ОС на SD-NAND», см. Factory.resolve_os):
+        """os_flash: что писать на SD-NAND (выбор меню «ОС для внутреннего накопителя», см. Factory.resolve_os):
         {"os", "os_name"} и либо "manifest_file"/"image_version" образа, либо "method": "zero"."""
         options = options or {}
         os_flash = os_flash or {}

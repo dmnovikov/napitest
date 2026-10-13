@@ -1,7 +1,19 @@
 <script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { api, links } from '../api/http'
+import type { PublicStatus } from '../api/types'
+import { formatBytes, formatDateTime } from '../lib/format'
 import { session } from '../session'
 
 const server = window.location.origin
+const status = ref<PublicStatus | null>(null)
+onMounted(async () => {
+  try {
+    status.value = await api.publicStatus()
+  } catch {
+    status.value = null
+  }
+})
 
 function print() {
   window.print()
@@ -13,7 +25,7 @@ function print() {
     <div class="head">
       <h2>Инструкция оператора стенда NAPI-C</h2>
       <span class="spacer" />
-      <button class="noprint" @click="print">Печать / PDF</button>
+      <button class="noprint" title="В окне печати выберите принтер «Сохранить как PDF»" @click="print">Скачать PDF / печать</button>
       <router-link v-if="!session.username" class="noprint" to="/login">Войти в стенд</router-link>
     </div>
     <p class="lead">
@@ -33,11 +45,19 @@ function print() {
     <section>
       <h3><span class="n">2</span> Подготовить тестовые microSD <small>(один раз)</small></h3>
       <ol>
-        <li>Откройте стенд в браузере, войдите, вверху выберите <b>«microSD»</b> и нажмите <b>«Скачать образ microSD»</b>.</li>
+        <li>Нажмите <b>«Скачать образ microSD»</b> ниже (пароль не нужен). Тот же файл есть в стенде на странице
+          «microSD».</li>
         <li>Прошейте скачанный файл на карту через balenaEtcher. Распаковывать файл не нужно.</li>
         <li>Сначала проверьте одну карту: вставьте её в плату (шаг 3). Если плата появилась на стенде, прошейте тем же
           файлом остальные карты.</li>
       </ol>
+      <div class="noprint dl">
+        <a v-if="status?.sd_image" class="download" :href="links.sdDownload" :download="status.sd_image.file">Скачать образ microSD</a>
+        <span v-if="status?.sd_image" class="muted">
+          {{ status.sd_image.file }} · {{ formatBytes(status.sd_image.size) }} · собран {{ formatDateTime(status.sd_image.built_at) }}
+        </span>
+        <span v-else-if="status" class="muted">Образ ещё не собран на стенде.</span>
+      </div>
       <p class="hint">
         После обновлений стенда карты перешивать не нужно: программа на них обновляется сама. Перешить карту нужно,
         только если она сломалась или её содержимое испорчено.
@@ -53,9 +73,11 @@ function print() {
         <li>Через 1–2 минуты плата появится на главной странице стенда синим квадратом «готов».</li>
       </ol>
       <p class="hint">
-        Тип платы (NAPI-C или NAPI-P) стенд определяет сам по подключению и пишет на квадрате. У NAPI-P сеть не
-        проверяется. Если тип определился неверно, выделите квадрат и в панели выберите «Тип платы». Ручной тип
-        помечается значком ✎, а в подсказке остаётся, что определил стенд.
+        Тип платы (NAPI-C или NAPI-P) стенд определяет сам по подключению и пишет на квадрате:
+        <b>зелёным</b> — распознан, <b>жёлтым «тип ?»</b> — не распознан, <b>жёлтым со значком ✎</b> — задан вручную.
+        Вверху стенд пишет, распознан ли тип у всех плат. У NAPI-P сеть не проверяется. Если тип определился неверно,
+        выделите квадрат и в панели выберите «Тип платы»; в подсказке остаётся, что определил стенд. На квадрате также
+        видны IP и MAC платы.
       </p>
       <p class="hint">
         Новая карта при первом включении дольше готовится: около 3 минут. Затем она скачивает с сервера образы ОС
@@ -68,7 +90,8 @@ function print() {
       <ol>
         <li>В поле <b>«Плат на стенде»</b> введите, сколько плат вы подключили. Стенд покажет, если какая-то не появилась.</li>
         <li>Нажмите <b>«Выбрать все online»</b>.</li>
-        <li>В списке <b>«ОС на SD-NAND»</b> оставьте выбранное по умолчанию (Armbian), если не сказано иное.</li>
+        <li>В списке <b>«ОС для внутреннего накопителя»</b> оставьте выбранное по умолчанию (Armbian), если не сказано
+          иное.</li>
         <li>Нажмите нужную кнопку:
           <ul>
             <li><b>«Тесты + прошивка»</b> — обычный режим: проверка и запись ОС;</li>
@@ -76,8 +99,13 @@ function print() {
             <li><b>«Только прошивка»</b> — запись ОС на уже проверенные платы.</li>
           </ul>
         </li>
-        <li>Подтвердите в окне. Квадраты станут жёлтыми, полоска под номером показывает, что идёт: RAM, NET, SD, FLASH, CHECKB.</li>
+        <li>Подтвердите в окне. Квадраты станут жёлтыми, полоска под номером показывает, что идёт: RAM, NET, SD, FLASH, CHECKB.
+          Внизу квадрата — «осталось ~N мин», вверху стенда — когда закончится партия.</li>
       </ol>
+      <p class="hint">
+        Если при входе стенд пишет «Осторожно: идут тесты», на стенде уже работает другой человек. Не выбирайте его
+        платы и не нажимайте «Остановить» без выделения: это остановит его партию.
+      </p>
     </section>
 
     <section>
@@ -105,6 +133,12 @@ function print() {
           <tr><td><span class="sw dashed" /></td><td><b>Серая пунктирная</b></td><td>нет связи с платой: проверьте питание, Ethernet и microSD</td></tr>
         </tbody>
       </table>
+      <p>
+        <b>Как найти бракованную плату на стенде:</b> у платы с FAIL синий светодиод <b>часто мигает</b>, у остальных —
+        обычное редкое мигание («сердцебиение»). Мигание брака держится до выключения платы или до новой проверки.
+        Чтобы найти конкретную плату, выделите её квадрат и нажмите <b>«Идентифицировать»</b>: светодиод загорится
+        непрерывно на 10 секунд.
+      </p>
     </section>
 
     <section>
@@ -203,6 +237,24 @@ p {
 .hint {
   color: var(--muted);
   font-size: 14px;
+}
+.dl {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+.download {
+  background: var(--blue);
+  color: #fff;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 8px;
+}
+.download:hover {
+  text-decoration: none;
+  filter: brightness(1.08);
 }
 .legend td {
   padding: 4px 8px 4px 0;

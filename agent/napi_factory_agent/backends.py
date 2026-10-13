@@ -104,6 +104,9 @@ class Backend:
     def identify(self, seconds: int) -> None:
         pass
 
+    def led_mode(self, mode: str) -> None:
+        """«fail» — частое мигание: так оператор находит бракованную плату на стенде; «normal» — как было."""
+
     def hostname(self) -> str:
         return socket.gethostname()
 
@@ -130,10 +133,16 @@ class Backend:
 class RealBackend(Backend):
     """Реальная NAPI-C под тестовой Armbian. Агент работает от root."""
 
+    leds_dir = Path("/sys/class/leds")
+
     def __init__(self, state_dir: str, led_name: str | None = None):
         self.root = "/"
         self.state_dir = state_dir
         self.led_name = led_name
+        self._led_lock = threading.Lock()
+        self._led_default: str | None = None
+        self._led_state = "normal"
+        self._led_gen = 0
 
     def destructive_allowed(self, params: dict[str, Any]) -> tuple[bool, str]:
         if params.get("destructive_enabled") is True:
@@ -141,7 +150,7 @@ class RealBackend(Backend):
         return False, "profile not validated"
 
     def read_dmesg(self) -> str:
-        # VALIDATE ON NAPI-C: буфер dmesg вмещает вывод memtest (log_buf_len в cmdline при необходимости)
+        # CHECKED NAPI-C: буфер dmesg вмещает вывод memtest=4
         try:
             return subprocess.run(["dmesg"], capture_output=True, text=True, timeout=30).stdout
         except (OSError, subprocess.SubprocessError):
@@ -209,8 +218,8 @@ class RealBackend(Backend):
                            require_blockdev=True)
 
     def _led(self) -> Path | None:
-        # VALIDATE ON NAPI-C: есть ли на плате LED, управляемый из Linux
-        base = Path("/sys/class/leds")
+        # CHECKED: на NAPI-C один управляемый светодиод rockpis:blue:user, по умолчанию heartbeat
+        base = self.leds_dir
         if not base.is_dir():
             return None
         names = sorted(os.listdir(base))
@@ -224,18 +233,47 @@ class RealBackend(Backend):
     def has_led(self) -> bool:
         return self._led() is not None
 
-    def identify(self, seconds: int) -> None:
+    def _led_write(self, led: Path, mode: str) -> None:
+        if mode == "fail":
+            (led / "trigger").write_text("timer")
+            (led / "delay_on").write_text("50")
+            (led / "delay_off").write_text("50")
+        elif mode == "on":
+            (led / "trigger").write_text("none")
+            (led / "brightness").write_text((led / "max_brightness").read_text().strip() or "1")
+        else:
+            (led / "trigger").write_text(self._led_default)
+
+    def _led_apply(self, mode: str) -> None:
         led = self._led()
         if not led:
             return
         try:
-            old = (led / "trigger").read_text()
-            cur = old.split("[")[1].split("]")[0] if "[" in old else "none"
-            (led / "trigger").write_text("timer")
-            time.sleep(seconds)
-            (led / "trigger").write_text(cur)
+            if self._led_default is None:
+                old = (led / "trigger").read_text()
+                cur = old.split("[")[1].split("]")[0] if "[" in old else "heartbeat"
+                # После перезапуска агента светодиод может остаться в режиме брака: исходный — heartbeat
+                self._led_default = "heartbeat" if cur in ("timer", "none") else cur
+            self._led_write(led, mode)
         except OSError:
             pass
+
+    def led_mode(self, mode: str) -> None:
+        with self._led_lock:
+            self._led_state = mode
+            self._led_gen += 1
+            self._led_apply(mode)
+
+    def identify(self, seconds: int) -> None:
+        """Горит непрерывно seconds секунд, затем прежний режим (heartbeat или мигание брака)."""
+        with self._led_lock:
+            self._led_gen += 1
+            gen = self._led_gen
+            self._led_apply("on")
+        time.sleep(seconds)
+        with self._led_lock:
+            if gen == self._led_gen:
+                self._led_apply(self._led_state)
 
 
 class _MockTarget(BlockTarget):
@@ -478,6 +516,9 @@ class MockBackend(Backend):
 
     def identify(self, seconds):
         self.log.append(f"identify {seconds}s")
+
+    def led_mode(self, mode):
+        self.log.append(f"led {mode}")
 
     def hostname(self):
         return f"sim-{self.cpuid[-4:]}"

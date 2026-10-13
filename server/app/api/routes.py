@@ -366,8 +366,18 @@ def sdcard_rebuild(body: SdRebuildIn, request: Request, op: dict = Depends(opera
     return {"ok": True}
 
 
+@router.get("/public")
+def public_status(request: Request):
+    """Без входа: что идёт на стенде (предупреждение на странице входа) и образ microSD для инструкции."""
+    f = core(request).factory
+    img = f.sdcard.view().get("image")
+    return {"active": f.active_batches(),
+            "sd_image": {k: img.get(k) for k in ("file", "size", "version", "built_at", "sha256")} if img else None}
+
+
 @router.get("/sdcard/download")
-def sdcard_download(request: Request, op: dict = Depends(operator)):
+def sdcard_download(request: Request):
+    """Без входа: образ нужен тестировщику по инструкции до того, как он получит пароль."""
     path = core(request).factory.sdcard.image_path()
     if path is None:
         raise HTTPException(404, "образ microSD ещё не собран")
