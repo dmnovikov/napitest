@@ -1,4 +1,5 @@
 import type {
+  BoardInfo,
   DeviceView,
   ImagesInfo,
   JobView,
@@ -319,4 +320,19 @@ export function osLine(item: MenuItem | undefined, info: ImagesInfo | null | und
   }
   if (nxt) parts.push(`новая ссылка: ${prepText(nxt)}`)
   return { text: parts.join(' · '), tone }
+}
+
+export const BOARD_NAME: Record<string, string> = { 'napi-c': 'NAPI-C', 'napi-p': 'NAPI-P' }
+
+/** Метка типа платы на квадрате: ручной тип, не совпадающий с автоопределением, помечен ✎. */
+export function boardBadge(b: BoardInfo | null | undefined): { text: string; manual: boolean; title: string } | null {
+  if (!b) return null
+  const name = BOARD_NAME[b.type] ?? b.type
+  const link = b.uplink ? `${b.uplink.iface}${b.uplink.driver ? ` (${b.uplink.driver})` : ''}` : 'агент не сообщил'
+  const auto = b.detected ? (BOARD_NAME[b.detected] ?? b.detected) : 'не определён'
+  const manual = !!b.override && b.override !== b.detected
+  const title = b.override
+    ? `${name}: задан вручную. Стенд определил: ${auto} (связь: ${link})`
+    : `${name}: определён по подключению (${link})`
+  return { text: manual ? `${name}✎` : name, manual, title }
 }

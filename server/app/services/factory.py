@@ -37,6 +37,22 @@ FINAL_STATUSES = ("pass", "fail", "interrupted", "cancelled", "offline", "incomp
 OVERRIDABLE_STATUSES = ("queued", "running", "offline")
 
 
+BOARDS = {"napi-c": "NAPI-C", "napi-p": "NAPI-P"}
+NO_NET = {"napi-p": "NAPI-P: сеть не проверяется (Ethernet на штырях, связь через USB-адаптер)"}
+
+
+def detect_board(uplink: dict | None) -> str | None:
+    """Тип платы по интерфейсу связи с сервером: USB-Ethernet адаптер → NAPI-P, встроенный → NAPI-C."""
+    if not isinstance(uplink, dict) or not uplink.get("iface"):
+        return None
+    return "napi-p" if uplink.get("bus") == "usb" else "napi-c"
+
+
+def board_of(dev) -> str:
+    """Тип, по которому проверяется плата: заданный вручную, иначе автоопределённый (NAPI-C по умолчанию)."""
+    return dev["board_override"] or dev["board_detected"] or "napi-c"
+
+
 class FactoryError(Exception):
     def __init__(self, message: str, status: int = 400, extra: Any = None):
         super().__init__(message)
@@ -256,7 +272,13 @@ class Factory:
             "result": job["result"],
             "detail": job["detail"],
             "os_name": job["os_name"],
+            "board_type": job["board_type"],
         }
+
+    def board_view(self, dev) -> dict:
+        return {"type": board_of(dev), "detected": dev["board_detected"], "override": dev["board_override"],
+                "uplink": {"iface": dev["uplink_iface"], "bus": dev["uplink_bus"], "driver": dev["uplink_driver"],
+                           "mac": dev["uplink_mac"]} if dev["uplink_iface"] else None}
 
     def tile(self, device_id: int, job) -> str:
         if job is not None and job["status"] == "awaiting_boot":
@@ -296,6 +318,7 @@ class Factory:
             "has_led": bool(dev["has_led"]),
             "simulated": bool(dev["simulated"]),
             "is_golden": bool(dev["is_golden"]),
+            "board": self.board_view(dev),
             "tested_before": bool(dev["tested_pass"]) or self.db.one(
                 "SELECT 1 FROM job j JOIN batch b ON b.id = j.batch_id WHERE j.device_id = ? AND b.kind = 'production'"
                 " AND j.status IN ('pass','fail','interrupted','offline','incomplete') LIMIT 1", (dev["id"],)) is not None,
@@ -514,6 +537,10 @@ class Factory:
             "boot_id": msg.get("boot_id"),
             "last_seen": now,
         }
+        up = msg.get("uplink") if isinstance(msg.get("uplink"), dict) else None
+        if up and up.get("iface"):
+            fields.update(board_detected=detect_board(up), uplink_iface=str(up["iface"])[:32],
+                          uplink_bus=up.get("bus"), uplink_driver=up.get("driver"), uplink_mac=up.get("mac"))
         if dev is None:
             cur = self.db.execute(
                 "INSERT INTO device (cpuid, first_seen, " + ", ".join(fields) + ") VALUES (?, ?, "
@@ -901,19 +928,30 @@ class Factory:
         )
         batch_id = cur.lastrowid
         job_ids = []
+        boards: dict[str, int] = {}
         for device_id in device_ids:
             job_id = "j_" + secrets.token_hex(8)
-            dev = self.db.one("SELECT test_sd_version, agent_version FROM device WHERE id = ?", (device_id,))
+            dev = self.db.one("SELECT * FROM device WHERE id = ?", (device_id,))
+            board = board_of(dev)
+            boards[board] = boards.get(board, 0) + 1
+            if board in NO_NET and params["stages"].get("net"):
+                dev_params = {**params, "stages": {**params["stages"], "net": False},
+                              "skip_reason": {**(params.get("skip_reason") or {}), "net": NO_NET[board]},
+                              "board": board}
+            else:
+                dev_params = {**params, "board": board}
             self.db.execute(
                 "INSERT INTO job (id, batch_id, device_id, mode, status, created_at, params_json, test_sd_version,"
-                " agent_version, os_key, os_name, image_file, image_url) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?,"
-                " ?, ?, ?, ?)",
-                (job_id, batch_id, device_id, mode, now, dumps(params), dev["test_sd_version"], dev["agent_version"],
-                 os_job.get("os_key"), os_job.get("os_name"), os_job.get("image_file"), os_job.get("image_url")),
+                " agent_version, os_key, os_name, image_file, image_url, board_type, board_detected, uplink_iface)"
+                " VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (job_id, batch_id, device_id, mode, now, dumps(dev_params), dev["test_sd_version"], dev["agent_version"],
+                 os_job.get("os_key"), os_job.get("os_name"), os_job.get("image_file"), os_job.get("image_url"),
+                 board, dev["board_detected"], dev["uplink_iface"]),
             )
             job_ids.append(job_id)
         self.audit(operator["username"], "batch_start",
                    {"batch": name, "mode": mode, "kind": kind, "devices": device_ids, "options": options or {},
+                    "boards": boards,
                     **({"os": os_job.get("os_name"), "image": os_job.get("image_file")} if os_job else {})})
         self._sync_allowed = False       # партия идёт: карты не качают образы (см. tick)
         await self.push_catalog()
@@ -1005,6 +1043,28 @@ class Factory:
             raise FactoryError("неизвестная плата", 404)
         self.audit(operator["username"], "golden", {"device_id": device_id, "is_golden": is_golden})
         self.mark(device_id)
+
+    def set_board(self, operator: dict, device_ids: list[int], board: str | None) -> list[str]:
+        """Тип платы вручную (None — снова автоопределение). Возвращает предупреждения."""
+        if board is not None and board not in BOARDS:
+            raise FactoryError("тип платы: napi-c | napi-p | авто")
+        ids = sorted(set(int(d) for d in device_ids))
+        if not ids:
+            raise FactoryError("не выбрано ни одной платы")
+        rows = self.db.all(f"SELECT * FROM device WHERE id IN ({','.join('?' * len(ids))})", ids)
+        if len(rows) != len(ids):
+            raise FactoryError("неизвестные платы", 404)
+        warnings = []
+        for dev in rows:
+            if board == "napi-c" and dev["uplink_bus"] == "usb":
+                warnings.append(f"плата {dev['display_no']}: подключена через USB-адаптер — тест сети проверит"
+                                " адаптер, а не плату")
+            self.db.execute("UPDATE device SET board_override = ? WHERE id = ?", (board, dev["id"]))
+            self.mark(dev["id"])
+        self.audit(operator["username"], "board_type",
+                   {"devices": ids, "board": board or "auto",
+                    "detected": {r["id"]: r["board_detected"] for r in rows}})
+        return warnings
 
     # ------------------------------------------------------------------ BOOT
 
@@ -1152,7 +1212,8 @@ class Factory:
         todo = []
         hosts: set[str] = set()
         for job, late in cands:
-            dev = self.db.one("SELECT id, mac, ip FROM device WHERE id = ?", (job["device_id"],))
+            dev = self.db.one("SELECT id, COALESCE(uplink_mac, mac) AS mac, ip FROM device WHERE id = ?",
+                              (job["device_id"],))
             st = self.boot_state.setdefault(job["id"], {"left": False, "up_since": None, "late": late})
             if self.is_online(dev["id"]):
                 st["up_since"] = None

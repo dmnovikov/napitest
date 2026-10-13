@@ -8,8 +8,8 @@ import RetestDialog from '../components/RetestDialog.vue'
 import TopPanel from '../components/TopPanel.vue'
 import { api, links } from '../api/http'
 import { live } from '../api/live'
-import type { DeviceView, Mode, RetestItem } from '../api/types'
-import { MODE_LABEL, osLine } from '../lib/format'
+import type { BoardType, DeviceView, Mode, RetestItem } from '../api/types'
+import { BOARD_NAME, MODE_LABEL, osLine } from '../lib/format'
 import { retestList } from '../lib/retest'
 
 const router = useRouter()
@@ -58,7 +58,7 @@ async function saveCustom(v: { url: string; password: string }) {
   }
 }
 const busy = ref(false)
-const message = ref<{ text: string; error: boolean } | null>(null)
+const message = ref<{ text: string; error: boolean; warn?: boolean } | null>(null)
 
 const selectedDevices = computed(() => devices.value.filter((d) => selected.value.has(d.device_id)))
 const anyLed = computed(() => selectedDevices.value.some((d) => d.has_led))
@@ -148,6 +148,28 @@ function pick(d: DeviceView, ev: MouseEvent) {
   selected.value = s
 }
 
+// Тип платы для выделенных (если автоопределение ошиблось); «авто» — снова по подключению
+async function setBoardSelected(ev: Event) {
+  const el = ev.target as HTMLSelectElement
+  const v = el.value
+  el.value = ''
+  const ids = [...selected.value]
+  if (!v || !ids.length) return
+  try {
+    const r = await api.setBoard(ids, v === 'auto' ? null : (v as BoardType))
+    if (r.warnings.length) say(r.warnings.join('\n'), false, true)
+    else say(`Тип платы для выбранных (${ids.length}): ${v === 'auto' ? 'по подключению' : BOARD_NAME[v]}`)
+  } catch (e) {
+    say(e instanceof Error ? e.message : String(e), true)
+  }
+}
+
+function boardsLine(ids: number[]): string {
+  const p = devices.value.filter((d) => ids.includes(d.device_id) && d.board?.type === 'napi-p').length
+  if (!p) return ''
+  return p === ids.length ? 'Все платы NAPI-P: сеть не проверяется.\n' : `Из них NAPI-P: ${p} — у них сеть не проверяется.\n`
+}
+
 function selectAllOnline() {
   selected.value = new Set(devices.value.filter((d) => d.online).map((d) => d.device_id))
 }
@@ -155,8 +177,8 @@ function clearSelection() {
   selected.value = new Set()
 }
 
-function say(text: string, error = false) {
-  message.value = { text, error }
+function say(text: string, error = false, warn = false) {
+  message.value = { text, error, warn }
   if (!error) setTimeout(() => message.value?.text === text && (message.value = null), 5000)
 }
 
@@ -227,7 +249,7 @@ function launch(mode: Mode) {
     if (!missing.value) return void guarded(() => startBatch(mode, ids))
     ask({
       title: MODE_LABEL[mode],
-      message: `${shortageText()}Запустить на выбранных (${ids.length})?`,
+      message: `${shortageText()}${boardsLine(ids)}Запустить на выбранных (${ids.length})?`,
       okText: 'Запустить',
       danger: false,
       run: () => startBatch(mode, ids),
@@ -250,7 +272,7 @@ function launch(mode: Mode) {
   ask({
     title: MODE_LABEL[mode],
     message:
-      `${shortageText()}Плат выбрано: ${ids.length}.\nОС на SD-NAND: ${osName.value}\n(${osInfo.value.text})\n` +
+      `${shortageText()}Плат выбрано: ${ids.length}.\n${boardsLine(ids)}ОС на SD-NAND: ${osName.value}\n(${osInfo.value.text})\n` +
       `${warn}\n${boot}\nПродолжить?`,
     okText: 'Запустить',
     danger: true,
@@ -363,6 +385,15 @@ function exportCsv() {
         <button @click="selectAllOnline">Выбрать все online</button>
         <button :disabled="!selected.size" @click="clearSelection">Снять выбор</button>
         <span class="selcount">выбрано: {{ selected.size }}</span>
+        <label v-if="selected.size" class="chk" title="Если стенд определил тип платы неверно. «Авто» — снова по подключению: встроенный Ethernet — NAPI-C, USB-адаптер — NAPI-P.">
+          Тип платы:
+          <select value="" @change="setBoardSelected">
+            <option value="" disabled>задать…</option>
+            <option value="auto">авто</option>
+            <option value="napi-c">NAPI-C</option>
+            <option value="napi-p">NAPI-P</option>
+          </select>
+        </label>
         <label class="chk" title="Запись и сверка всей SD-NAND (3,9 ГБ). Без галочки: 3 участка по 64 МБ, ~40 с. В «Тесты + прошивка» SD-NAND проверяется целиком всегда.">
           <input v-model="fullPattern" type="checkbox" /> Тотальная проверка SD-NAND (+12 мин, режим «Только тесты»)
         </label>
@@ -409,7 +440,7 @@ function exportCsv() {
       </div>
     </div>
 
-    <div v-if="message" class="message" :class="{ error: message.error }" @click="message = null">
+    <div v-if="message" class="message" :class="{ error: message.error, warn: message.warn }" @click="message = null">
       {{ message.text }}
     </div>
 
@@ -571,6 +602,12 @@ function exportCsv() {
   border: 1px solid #bfe0c6;
   font-size: 14px;
   cursor: pointer;
+}
+.message.warn {
+  background: #fff6e0;
+  border-color: #f0d27a;
+  color: #8a4b00;
+  white-space: pre-line;
 }
 .message.error {
   background: #fdecec;

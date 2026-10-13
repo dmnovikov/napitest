@@ -10,9 +10,11 @@ import segno
 
 from ..config import STAGES
 from ..db.database import loads
+from .factory import BOARDS as BOARD_NAMES
 from .factory import Factory, FactoryError
 
-CSV_FIELDS = ["serial", "cpuid", "batch", "date", "mode", "status", "test_sd_version", "os", "image_version",
+CSV_FIELDS = ["serial", "cpuid", "board", "board_detected", "uplink", "batch", "date", "mode", "status",
+              "test_sd_version", "os", "image_version",
               "image_file", "image_sha256", "image_url", "agent_version", "job_id", "warnings"] + [f"{s}_{k}" for s in STAGES for k in ("state", "detail")]
 
 
@@ -62,6 +64,7 @@ class Reports:
             "image_version": job["image_version"], "image_sha256": job["image_sha256"],
             "os_name": job["os_name"], "image_file": job["image_file"], "image_url": job["image_url"],
             "test_sd_version": job["test_sd_version"], "agent_version": job["agent_version"],
+            "board_type": job["board_type"], "board_detected": job["board_detected"], "uplink_iface": job["uplink_iface"],
             "stages": stages,
         }
         if include_events:
@@ -112,7 +115,7 @@ class Reports:
             stages = self.f.job_stages(job)
             jobs.append({
                 "job_id": job["id"], "device_id": job["device_id"], "serial": job["serial"], "cpuid": job["cpuid"],
-                "status": job["status"], "result": job["result"], "detail": job["detail"],
+                "board_type": job["board_type"], "status": job["status"], "result": job["result"], "detail": job["detail"],
                 "stages": {s: {"state": v.get("state"), "detail": v.get("detail"), "warnings": v.get("warnings") or []}
                            for s, v in stages.items()},
             })
@@ -128,7 +131,9 @@ class Reports:
             " ORDER BY d.display_no, d.id", (batch_id,)):
             stages = self.f.job_stages(job)
             row = {
-                "serial": job["serial"] or "", "cpuid": job["cpuid"], "batch": b["name"],
+                "serial": job["serial"] or "", "cpuid": job["cpuid"], "board": BOARD_NAMES.get(job["board_type"], ""),
+                "board_detected": BOARD_NAMES.get(job["board_detected"], ""), "uplink": job["uplink_iface"] or "",
+                "batch": b["name"],
                 "date": (job["finished_at"] or job["created_at"])[:10], "mode": job["mode"], "status": job["status"],
                 "test_sd_version": job["test_sd_version"] or "", "os": job["os_name"] or "",
                 "image_version": job["image_version"] or "", "image_file": job["image_file"] or "",

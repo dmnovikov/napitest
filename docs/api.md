@@ -327,3 +327,19 @@ REST: `GET /api/v1/sdcard` (состояние, прогресс, версии �
 подтверждается на `hello_ack`; если до подтверждения агент перезапустился больше 3 раз, при
 следующем запуске ссылка возвращается на прежнюю версию, а новая заносится в `bad` (`update.json`)
 и больше не ставится. Хранятся две версии: текущая и прежняя.
+
+## 7. Тип платы NAPI-C / NAPI-P
+
+NAPI-P по железу и образам совпадает с NAPI-C, но Ethernet у неё на штырях: на стенде она подключается
+через USB-Ethernet адаптер, и сеть у неё не проверяется. Агент шлёт в `hello`
+`"uplink": {"iface", "bus": "usb"|"platform"|"virtual", "driver", "mac"}` — интерфейс маршрута до сервера
+(`/proc/net/route`), `ip` — адрес этого интерфейса. Сервер: `bus == "usb"` → `napi-p`, иначе `napi-c`
+(`device.board_detected`). Ручная замена — `PUT /api/v1/devices/board {"device_ids": [...], "board":
+"napi-c"|"napi-p"|null}` (`null` — снова автоопределение; `device.board_override`, запись в журнал,
+предупреждение, если NAPI-C задан для платы на USB-адаптере). В `DeviceView.board`: `type` (по нему идёт
+проверка), `detected`, `override`, `uplink`.
+
+Задание NAPI-P: `params.stages.net = false`, `params.skip_reason.net` — текст для этапа, `params.board`.
+BOOTCHECK ищет плату по MAC интерфейса связи (`uplink.mac`, у NAPI-P — адаптер). Тип платы, автоопределение
+и интерфейс сохраняются в задании (`board_type`, `board_detected`, `uplink_iface`) и попадают в CSV
+(`board`, `board_detected`, `uplink`).

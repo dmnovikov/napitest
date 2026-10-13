@@ -65,6 +65,11 @@ class GoldenIn(BaseModel):
     is_golden: bool
 
 
+class BoardIn(BaseModel):
+    device_ids: list[int] = Field(default_factory=list)
+    board: Literal["napi-c", "napi-p"] | None = None      # None: автоопределение
+
+
 class ExpectedIn(BaseModel):
     count: int
 
@@ -215,6 +220,16 @@ def golden(device_id: int, body: GoldenIn, request: Request, op: dict = Depends(
     except FactoryError as exc:
         return handle(exc)
     return {"ok": True}
+
+
+@router.put("/devices/board")
+def set_board(body: BoardIn, request: Request, op: dict = Depends(operator)):
+    """Тип платы вручную (для одной или выделенных плат); board: null — снова автоопределение."""
+    try:
+        warnings = core(request).factory.set_board(op, body.device_ids, body.board)
+    except FactoryError as exc:
+        return handle(exc)
+    return {"ok": True, "warnings": warnings}
 
 
 @router.put("/expected")

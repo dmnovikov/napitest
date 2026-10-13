@@ -61,6 +61,20 @@ export interface DeviceView {
   previous?: PreviousResult | null
   tile: Tile
   job: JobView | null
+  /** Тип платы: определён по интерфейсу связи с сервером или задан вручную. */
+  board?: BoardInfo
+}
+
+export type BoardType = 'napi-c' | 'napi-p'
+
+export interface BoardInfo {
+  /** По этому типу проверяется плата. */
+  type: BoardType
+  /** Что определил стенд по интерфейсу связи (null — агент не сообщил). */
+  detected: BoardType | null
+  /** Задан вручную (null — автоопределение). */
+  override: BoardType | null
+  uplink: { iface: string; bus: string | null; driver: string | null; mac: string | null } | null
 }
 
 export interface BatchInfo {
@@ -139,6 +153,9 @@ export interface DeviceJob {
   os_name?: string | null
   image_file?: string | null
   image_url?: string | null
+  board_type?: BoardType | null
+  board_detected?: BoardType | null
+  uplink_iface?: string | null
   stages: StageResult[]
 }
 
@@ -263,6 +280,7 @@ export interface BatchJob {
   device_id: number
   serial: string | null
   cpuid: string | null
+  board_type?: BoardType | null
   status: JobStatus
   result: string | null
   stages: Partial<Record<StageName, { state: StageState; detail?: string | null; warnings?: string[] | null }>>

@@ -4,9 +4,10 @@ import { useRoute } from 'vue-router'
 import StageBar from '../components/StageBar.vue'
 import { api, links } from '../api/http'
 import { live } from '../api/live'
-import type { DeviceDetail, DeviceJob } from '../api/types'
+import type { BoardType, DeviceDetail, DeviceJob } from '../api/types'
 import { now } from '../lib/clock'
 import {
+  BOARD_NAME,
   JOB_STATUS_LABEL,
   MODE_LABEL,
   STAGE_LONG,
@@ -66,6 +67,19 @@ async function toggleGolden() {
   if (!device.value) return
   try {
     await api.setGolden(id.value, !device.value.is_golden)
+    await load()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+const boardMsg = ref<string | null>(null)
+async function setBoard(ev: Event) {
+  const v = (ev.target as HTMLSelectElement).value
+  boardMsg.value = null
+  try {
+    const r = await api.setBoard([id.value], v === 'auto' ? null : (v as BoardType))
+    boardMsg.value = r.warnings.join('\n') || null
     await load()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -141,6 +155,28 @@ const canLabel = computed(() => {
           <table class="kv">
             <tr><th>Серийник</th><td class="mono">{{ device.serial ?? '—' }}</td></tr>
             <tr><th>cpuid</th><td class="mono">{{ device.cpuid ?? '—' }} <span class="muted">({{ device.id_source ?? '?' }})</span></td></tr>
+            <tr>
+              <th>Плата</th>
+              <td>
+                <b>{{ BOARD_NAME[device.board?.type ?? 'napi-c'] }}</b>
+                <span class="muted">
+                  <template v-if="device.board?.override"> — задан вручную, стенд определил:
+                    {{ device.board.detected ? BOARD_NAME[device.board.detected] : 'не определён' }}</template>
+                  <template v-else-if="device.board?.detected"> — определён по подключению</template>
+                  <template v-else> — агент не сообщил подключение</template>
+                  <template v-if="device.board?.uplink">
+                    (связь: {{ device.board.uplink.iface }}<template v-if="device.board.uplink.bus === 'usb'">, USB-адаптер</template><template v-if="device.board.uplink.driver">, {{ device.board.uplink.driver }}</template>)
+                  </template>
+                </span>
+                <select class="boardsel" :value="device.board?.override ?? 'auto'" @change="setBoard">
+                  <option value="auto">авто</option>
+                  <option value="napi-c">NAPI-C вручную</option>
+                  <option value="napi-p">NAPI-P вручную</option>
+                </select>
+                <div v-if="boardMsg" class="boardwarn">{{ boardMsg }}</div>
+                <div v-if="device.board?.type === 'napi-p'" class="muted">NAPI-P: сеть не проверяется</div>
+              </td>
+            </tr>
             <tr><th>IP</th><td class="mono">{{ device.ip ?? '—' }}</td></tr>
             <tr><th>MAC</th><td class="mono">{{ device.mac ?? '—' }} <span class="muted">({{ device.mac_source ?? '?' }})</span></td></tr>
             <tr><th>Связь</th><td>{{ device.online ? 'online' : 'нет связи' }}, последний heartbeat {{ formatAgo(device.last_seen, now) }}<span class="muted"> ({{ formatDateTime(device.last_seen) }})</span></td></tr>
@@ -234,6 +270,10 @@ const canLabel = computed(() => {
           <div v-if="open.has(j.job_id)" class="job-body">
             <div class="muted small">
               Задание <span class="mono">{{ j.job_id }}</span>
+              <template v-if="j.board_type"> · плата <b>{{ BOARD_NAME[j.board_type] }}</b><template
+                v-if="j.board_detected && j.board_detected !== j.board_type"> (вручную, стенд определил
+                {{ BOARD_NAME[j.board_detected] }})</template><template v-if="j.uplink_iface">, связь
+                {{ j.uplink_iface }}</template></template>
               <template v-if="j.os_name"> · ОС <b>{{ j.os_name }}</b></template>
               <template v-if="j.image_file"> · <span class="mono">{{ j.image_file }}</span></template>
               <template v-else-if="j.image_version"> · образ <span class="mono">{{ j.image_version }}</span></template>
@@ -468,5 +508,15 @@ const canLabel = computed(() => {
 .warns-inline {
   color: #9a6a00;
   font-size: 12px;
+}
+.boardsel {
+  margin-left: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+.boardwarn {
+  color: #8a4b00;
+  font-weight: 600;
+  white-space: pre-line;
 }
 </style>

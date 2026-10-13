@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import socket
+import struct
 import subprocess
 from pathlib import Path
 import logging
@@ -125,3 +127,56 @@ def regenerate_machine_id(root: str = "/") -> bool:
         return True
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def route_iface(root: str | os.PathLike, ip: str | None) -> str | None:
+    """Интерфейс, через который идёт маршрут до ip (по /proc/net/route); без ip — маршрут по умолчанию."""
+    try:
+        lines = (Path(root) / "proc/net/route").read_text().splitlines()[1:]
+    except OSError:
+        return None
+    try:
+        target = struct.unpack("<I", socket.inet_aton(ip))[0] if ip else 0
+    except OSError:
+        target = 0
+    best: tuple[int, int, str] | None = None
+    for line in lines:
+        f = line.split()
+        if len(f) < 8:
+            continue
+        try:
+            dest, flags, metric, mask = int(f[1], 16), int(f[3], 16), int(f[6]), int(f[7], 16)
+        except ValueError:
+            continue
+        if not flags & 1 or (target & mask) != dest:          # RTF_UP
+            continue
+        key = (bin(mask).count("1"), -metric, f[0])
+        if best is None or key[:2] > best[:2]:
+            best = key
+    return best[2] if best else None
+
+
+def iface_info(root: str | os.PathLike, iface: str) -> dict[str, Any]:
+    """Шина и драйвер сетевого интерфейса: usb (USB-Ethernet адаптер) или встроенный (platform)."""
+    base = Path(root) / "sys/class/net" / iface
+    dev = base / "device"
+    if dev.exists():
+        path = os.path.realpath(dev)
+        bus = "usb" if "/usb" in path else "platform"
+        try:
+            driver = os.path.basename(os.path.realpath(dev / "driver"))
+        except OSError:
+            driver = None
+    else:
+        bus, driver = "virtual", None
+    try:
+        mac = (base / "address").read_text().strip().lower()
+    except OSError:
+        mac = None
+    return {"iface": iface, "bus": bus, "driver": driver, "mac": mac}
+
+
+def uplink(root: str | os.PathLike, server_ip: str | None) -> dict[str, Any] | None:
+    """Через что плата подключена к серверу: тип платы NAPI-C/NAPI-P сервер определяет по шине."""
+    iface = route_iface(root, server_ip)
+    return iface_info(root, iface) if iface else None

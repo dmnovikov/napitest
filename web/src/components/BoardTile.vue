@@ -5,6 +5,7 @@ import StageBar from './StageBar.vue'
 import { now } from '../lib/clock'
 import {
   TILE_LABEL,
+  boardBadge,
   currentStageLine,
   formatAgo,
   jobHasWarn,
@@ -28,6 +29,7 @@ const complete = computed(() => props.device.tile === 'pass' && props.device.job
 const bootChecked = computed(
   () => props.device.tile === 'pass' && props.device.job?.stages?.boot?.state === 'pass',
 )
+const board = computed(() => boardBadge(props.device.board))
 const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
 const line = computed(() => {
   if (passWarn.value) return warns.value[0] ?? 'PASS, есть замечания'
@@ -45,6 +47,7 @@ const title = computed(() => {
     `№${d.display_no} ${d.serial ?? ''}`,
     `cpuid: ${d.cpuid ?? '—'}`,
     `IP: ${d.ip ?? '—'}`,
+    ...(board.value ? [`Плата: ${board.value.title}`] : []),
     `Состояние: ${TILE_LABEL[d.tile] ?? d.tile}${complete.value ? ' — тесты и прошивка пройдены' : ''}${bootChecked.value ? ', BOOTCHECK пройден' : ''}`,
   ].join('\n')
 })
@@ -63,6 +66,7 @@ const title = computed(() => {
       <span v-if="device.tested_before" class="seen" title="Плата уже проверялась, есть в базе">↻</span>
       <span class="tag">{{ tileTag(device) }}</span>
       <span class="badges">
+        <span v-if="board" class="badge board" :class="{ manual: board.manual }" :title="board.title">{{ board.text }}</span>
         <span v-if="bootChecked" class="badge bootok" title="BOOTCHECK пройден: загрузка с SD-NAND проверена">✓</span>
         <span v-if="device.is_golden" class="badge golden" title="Golden sample">★</span>
         <span v-if="device.simulated" class="badge sim" title="Симулированный агент">SIM</span>
@@ -111,6 +115,18 @@ const title = computed(() => {
 .tile-busy,
 .tile-awaiting_boot {
   border-color: var(--yellow);
+}
+.badge.board {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #eceef1;
+  color: #4b5563;
+  font-weight: 600;
+}
+.badge.board.manual {
+  background: #fff1c2;
+  color: #8a5a00;
 }
 .tile-pass {
   border-color: var(--green);

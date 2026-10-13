@@ -63,6 +63,7 @@ async def main() -> None:
     ap.add_argument("--fail-rate", type=float, default=0.1, help="доля заданий с ошибкой на случайном этапе")
     ap.add_argument("--drop-rate", type=float, default=0.002, help="вероятность обрыва связи на тик heartbeat")
     ap.add_argument("--boot-fail-rate", type=float, default=0.05, help="доля плат без отчёта первой загрузки")
+    ap.add_argument("--napi-p", type=int, default=0, help="сколько плат подключены через USB-адаптер (NAPI-P)")
     ap.add_argument("--speed", type=float, default=1.0, help="множитель скорости (2 = вдвое быстрее)")
     ap.add_argument("--image-version", default="2026.10.0")
     ap.add_argument("--test-sd-version", default="2026.10.1-sim")
@@ -91,7 +92,8 @@ async def main() -> None:
     for i in range(args.count):
         cpuid = cpuid_for(i, args.seed)
         be = MockBackend(str(base / f"board-{i:02d}"), cpuid, speed=args.speed, fail_rate=args.fail_rate,
-                         drop_rate=args.drop_rate, seed=hash((args.seed, i)) & 0xFFFFFFFF)
+                         drop_rate=args.drop_rate, seed=hash((args.seed, i)) & 0xFFFFFFFF,
+                         uplink="usb" if i < args.napi_p else "end0")
         cfg = load_config(None, {"token": args.token, "server_url": args.server, "mdns": False,
                                  "factory_dir": str(factory), "heartbeat_s": args.heartbeat})
         agent = Agent(cfg, be, be.state_dir)

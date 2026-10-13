@@ -7,6 +7,7 @@ import type {
   ImageHistoryRow,
   ImagesInfo,
   SdCardInfo,
+  BoardType,
   Mode,
   Summary,
 } from './types'
@@ -93,6 +94,8 @@ export const api = {
     change: { url?: string; name?: string; visible?: boolean; move?: number },
   ) => request<unknown>('PUT', `/images/${encodeURIComponent(key)}`, { password, ...change }),
   setCustom: (url: string, password: string) => request<unknown>('POST', '/images/custom', { url, password }),
+  setBoard: (device_ids: number[], board: BoardType | null) =>
+    request<{ warnings: string[] }>('PUT', '/devices/board', { device_ids, board }),
   sdcard: () => request<SdCardInfo>('GET', '/sdcard'),
   sdRebuild: (password: string, url?: string) =>
     request<unknown>('POST', '/sdcard', { password, url: url || null }),

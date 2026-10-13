@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import ipaddress
 import logging
 import threading
 import time
@@ -16,7 +17,7 @@ from typing import Any, Callable
 
 from . import PROTO, STAGES, __version__
 from .config import AgentConfig
-from .identity import read_cpuid, read_mac
+from .identity import read_cpuid, read_mac, uplink
 from .images import find_manifest, selfcheck
 from .imagesync import ImageSync
 from .selfupdate import Updater
@@ -51,7 +52,8 @@ def initial_stages(mode: str, params: dict[str, Any]) -> dict[str, dict[str, Any
         if s not in run_set:
             out[s] = {"state": "skipped", "detail": "по режиму"}
         elif not enabled.get(s, True) or (s == "boot" and not (params.get("boot") or {}).get("enabled", True)):
-            out[s] = {"state": "skipped", "detail": "отключено в профиле"}
+            # Причина от сервера (например, «NAPI-P: сеть не проверяется»), иначе — профиль
+            out[s] = {"state": "skipped", "detail": (params.get("skip_reason") or {}).get(s) or "отключено в профиле"}
         else:
             out[s] = {"state": "pending"}
     return out
@@ -175,14 +177,22 @@ class Agent:
         cur = self.snapshot() if self.job else None
         if cur:
             cur.pop("type", None)
+        up = uplink(be.root, self._server_ip())
         return {
             "type": "hello", "proto": PROTO, "cpuid": self.cpuid, "id_source": self.id_source,
-            **mac, "ip": be.iface_ip(iface), "hostname": be.hostname(), "agent_version": f"{__version__}+{self.updater.version}",
+            **mac, "ip": be.iface_ip(up["iface"] if up else iface) or be.iface_ip(iface), "uplink": up, "hostname": be.hostname(), "agent_version": f"{__version__}+{self.updater.version}",
             "test_sd_version": read_text(self.cfg.version_file, "unknown"), "kernel": be.kernel(),
             "ram_bytes": ram, "has_led": be.has_led(), "simulated": bool(be.simulated), "inventory": inv,
             "sd_selfcheck": self.sd_selfcheck, "stream": self.queue.stream, "current_job": cur,
             "boot_id": be.boot_id(), "images": dict(self.images.status), "agent_update": self.updater.info(),
         }
+
+    def _server_ip(self) -> str | None:
+        host = (self.server_addr or (None,))[0]
+        try:
+            return str(ipaddress.ip_address(host)) if host else None
+        except ValueError:
+            return None                   # имя хоста: берётся маршрут по умолчанию
 
     def run_selfcheck(self) -> None:
         images = self.cfg.images_dir

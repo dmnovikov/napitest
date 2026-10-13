@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import StageBar from '../components/StageBar.vue'
 import { api, links } from '../api/http'
 import type { BatchDetail, BatchJob, JobView } from '../api/types'
-import { JOB_STATUS_LABEL, MODE_LABEL, STAGE_LONG, formatDateTime } from '../lib/format'
+import { JOB_STATUS_LABEL, MODE_LABEL, STAGE_LONG, formatDateTime, BOARD_NAME } from '../lib/format'
 
 const route = useRoute()
 const id = computed(() => Number(route.params.id))
@@ -72,12 +72,13 @@ function sdv(v: unknown) {
       </table>
       <table class="tbl">
         <thead>
-          <tr><th>Серийник</th><th>cpuid</th><th>Этапы</th><th>Статус</th><th>Причина</th><th></th></tr>
+          <tr><th>Серийник</th><th>cpuid</th><th>Плата</th><th>Этапы</th><th>Статус</th><th>Причина</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="j in data.jobs" :key="j.job_id">
             <td class="mono"><router-link :to="`/device/${j.device_id}`">{{ j.serial ?? '—' }}</router-link></td>
             <td class="mono">{{ j.cpuid ?? '—' }}</td>
+            <td>{{ j.board_type ? BOARD_NAME[j.board_type] : '—' }}</td>
             <td style="width: 150px"><StageBar :job="asView(j)" /></td>
             <td :class="isPass(j) ? 'pass' : j.status === 'fail' ? 'fail' : ''">{{ JOB_STATUS_LABEL[j.status] ?? j.status }}</td>
             <td>

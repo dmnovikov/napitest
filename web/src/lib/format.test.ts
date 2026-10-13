@@ -175,3 +175,19 @@ describe('osLine', () => {
     expect(osLine({ key: 'custom', name: 'Custom', kind: 'custom' }, info()).text).toBe('укажите ссылку на образ клиента')
   })
 })
+
+describe('boardBadge', () => {
+  it('shows detected type and marks manual mismatch', async () => {
+    const { boardBadge } = await import('./format')
+    const usb = { iface: 'enx00e04c680001', bus: 'usb', driver: 'r8152', mac: null }
+    expect(boardBadge({ type: 'napi-p', detected: 'napi-p', override: null, uplink: usb })).toEqual({
+      text: 'NAPI-P',
+      manual: false,
+      title: 'NAPI-P: определён по подключению (enx00e04c680001 (r8152))',
+    })
+    const m = boardBadge({ type: 'napi-c', detected: 'napi-p', override: 'napi-c', uplink: usb })
+    expect(m?.text).toBe('NAPI-C✎')
+    expect(m?.title).toContain('Стенд определил: NAPI-P')
+    expect(boardBadge(undefined)).toBeNull()
+  })
+})

@@ -290,7 +290,7 @@ class MockBackend(Backend):
 
     def __init__(self, base_dir: str, cpuid: str, *, speed: float = 1.0, fail_rate: float = 0.0,
                  drop_rate: float = 0.0, seed: int | None = None, ram_mib: int = 512,
-                 pattern_limit: int = 4 * 1024 * 1024, fail_stage: str | None = None):
+                 pattern_limit: int = 4 * 1024 * 1024, fail_stage: str | None = None, uplink: str = "end0"):
         self.base = Path(base_dir)
         self.root = str(self.base / "root")
         self.state_dir = str(self.base / "state")
@@ -302,6 +302,7 @@ class MockBackend(Backend):
         self.ram_mib = ram_mib
         self.pattern_limit = pattern_limit
         self.forced_fail = fail_stage
+        self.uplink = uplink                 # "end0" (NAPI-C) или "usb" (NAPI-P: USB-Ethernet адаптер)
         self.fault: str | None = None
         self.fault_kind: str | None = None
         self.sim_boot_id = f"sim-{random.getrandbits(64):016x}"   # новая «загрузка» на каждый запуск
@@ -334,7 +335,32 @@ class MockBackend(Backend):
             (net / k).write_text(v + "\n")
         for k in ("rx_errors", "tx_errors"):
             (net / "statistics" / k).write_text("0\n")
+        self._fake_link(net, "devices/platform/ff4e0000.ethernet", "rk_gmac-dwmac")
+        iface = "end0"
+        if self.uplink == "usb":
+            iface = "enx00e04c" + "%06x" % h
+            usb = root / "sys/class/net" / iface
+            usb.mkdir(parents=True, exist_ok=True)
+            (usb / "address").write_text("00:e0:4c:%02x:%02x:%02x\n" % ((h >> 16) & 0xFF, (h >> 8) & 0xFF, h & 0xFF))
+            self._fake_link(usb, "devices/platform/ff440000.usb/usb1/1-1/1-1:1.0", "r8152")
+        (root / "proc/net").mkdir(parents=True, exist_ok=True)
+        (root / "proc/net/route").write_text(
+            "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n"
+            f"{iface}\t00000000\t0100630A\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
+            f"{iface}\t0000630A\t00000000\t0001\t0\t0\t100\t0000FFFF\t0\t0\t0\n")
         self._write_meminfo(self.ram_mib)
+
+    def _fake_link(self, net: Path, devpath: str, driver: str) -> None:
+        """sys/class/net/<if>/device -> устройство на шине, device/driver -> драйвер (как в настоящем sysfs)."""
+        root = Path(self.root)
+        dev = root / "sys" / devpath
+        (dev).mkdir(parents=True, exist_ok=True)
+        drv = root / "sys/bus/drivers" / driver
+        drv.mkdir(parents=True, exist_ok=True)
+        for link, target in ((net / "device", dev), (dev / "driver", drv)):
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(target)
 
     def _write_meminfo(self, mib: int) -> None:
         kb = mib * 1024 - 20 * 1024
