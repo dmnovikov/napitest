@@ -71,6 +71,9 @@ def test_boot_by_network(tmp_path):
         b = boot_stage(c, jid)
         assert b["state"] == "pass" and b["detail"] == "загрузка с SD-NAND, в сети 10.0.0.9"
         assert b["measurements"]["ssh_banner"].startswith("SSH-2.0") and b["warnings"] == []
+        # плата работает с SD-NAND, агента там нет: квадрат показывает итог, а не «нет связи»
+        dev = c.get("/api/v1/state").json()["devices"][0]
+        assert dev["online"] is False and dev["tile"] == "pass"
 
 
 def test_boot_microsd_left_in(tmp_path):

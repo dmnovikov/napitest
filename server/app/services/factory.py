@@ -284,6 +284,10 @@ class Factory:
         if job is not None and job["status"] == "awaiting_boot":
             return "awaiting_boot"
         if not self.is_online(device_id):
+            # Прошита и ушла со связи (загрузилась с SD-NAND, агента там нет) — показываем итог, а не «нет связи»
+            if job is not None and job["status"] == "pass" and (self.job_stages(job).get("flash") or {}).get(
+                    "state") == "pass":
+                return "pass"
             return "offline"
         if job is None:
             return "ready"
