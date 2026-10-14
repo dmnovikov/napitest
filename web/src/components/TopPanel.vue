@@ -32,6 +32,9 @@ const counters = computed(() => {
     { k: 'Online', v: s?.online, c: 'c-blue', sub: '' },
     { k: 'В работе', v: s?.busy, c: 'c-yellow', sub: '' },
     { k: 'PASS', v: s?.pass, c: 'c-green', sub: s?.pass_warn ? `из них ⚠ ${s.pass_warn}` : '' },
+    ...(s?.boot_unconfirmed
+      ? [{ k: 'BOOT ?', v: s.boot_unconfirmed, c: 'c-orange', sub: 'загрузка не подтверждена' }]
+      : []),
     { k: 'FAIL', v: s?.fail, c: 'c-red', sub: '' },
     { k: 'Offline', v: s?.offline, c: 'c-gray', sub: '' },
     { k: 'Прервано', v: s?.interrupted, c: 'c-gray', sub: '' },
@@ -131,6 +134,9 @@ const counters = computed(() => {
 }
 .c-green .v {
   color: var(--green);
+}
+.c-orange .v {
+  color: var(--orange);
 }
 .c-red .v {
   color: var(--red);

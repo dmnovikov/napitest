@@ -51,6 +51,7 @@ export const TILE_LABEL: Record<Tile, string> = {
   busy: 'в работе',
   awaiting_boot: 'ожидание загрузки',
   pass: 'PASS',
+  boot_unconfirmed: 'PASS, загрузка не подтверждена',
   fail: 'FAIL',
   offline: 'нет связи',
   interrupted: 'прервано',
@@ -84,6 +85,7 @@ export function tileClass(tile: Tile | string | null | undefined): string {
     case 'busy':
     case 'awaiting_boot':
     case 'pass':
+    case 'boot_unconfirmed':
     case 'fail':
     case 'offline':
     case 'interrupted':

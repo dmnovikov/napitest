@@ -33,11 +33,16 @@ const bootChecked = computed(
 )
 const board = computed(() => boardBadge(props.device.board))
 const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
+// PASS, но BOOTCHECK не подтвердил загрузку с SD-NAND: жёлтая плитка, проверить глазами
+const bootUnconfirmed = computed(() => props.device.tile === 'boot_unconfirmed')
 const line = computed(() => {
+  if (bootUnconfirmed.value) return 'PASS, загрузка не подтверждена — проверьте'
   if (passWarn.value) return warns.value[0] ?? 'PASS, есть замечания'
   return currentStageLine(shownJob.value, props.device.tile)
 })
-const lineTitle = computed(() => (passWarn.value ? warns.value.join('\n') || 'есть замечания' : line.value))
+const lineTitle = computed(() =>
+  passWarn.value || bootUnconfirmed.value ? warns.value.join('\n') || 'есть замечания' : line.value,
+)
 const timer = computed(() => tileTimer(shownJob.value, now.value))
 const eta = computed(() => (props.device.tile === 'awaiting_boot' ? '' : etaText(shownJob.value)))
 // MAC интерфейса связи со стендом (у NAPI-P — USB-адаптера), иначе MAC платы
@@ -87,8 +92,8 @@ const title = computed(() => {
     </div>
     <StageBar :job="shownJob" labels />
     <div v-if="prev" class="prev" :class="'prev-' + prev.status" :title="prevLine">{{ prevLine }}</div>
-    <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn }" :title="lineTitle">
-      <span v-if="passWarn" class="warn-ico">⚠</span>{{ line }}
+    <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn || bootUnconfirmed }" :title="lineTitle">
+      <span v-if="passWarn || bootUnconfirmed" class="warn-ico">⚠</span>{{ line }}
     </div>
     <div class="row foot">
       <span :class="{ countdown: timer.countdown }">{{ timer.text }}</span>
@@ -127,6 +132,10 @@ const title = computed(() => {
 .tile-busy,
 .tile-awaiting_boot {
   border-color: var(--yellow);
+}
+.tile-boot_unconfirmed {
+  border-color: var(--orange);
+  background: #fff6e8;
 }
 .tile {
   container-type: inline-size;

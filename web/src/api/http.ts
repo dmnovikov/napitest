@@ -82,6 +82,8 @@ export const api = {
   batches: () => request<BatchRow[]>('GET', '/batches'),
   batch: (id: number) => request<BatchDetail>('GET', `/batches/${id}`),
   device: (id: number) => request<DeviceDetail>('GET', `/devices/${id}`),
+  refreshGrid: () =>
+    request<{ hidden: number; kept_busy: string; reconnect: number }>('POST', '/devices/refresh', {}),
   identify: (id: number) => request<unknown>('POST', `/devices/${id}/identify`, {}),
   setGolden: (id: number, is_golden: boolean) =>
     request<unknown>('POST', `/devices/${id}/golden`, { is_golden }),

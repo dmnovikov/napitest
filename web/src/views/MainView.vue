@@ -19,6 +19,13 @@ const devices = computed<DeviceView[]>(() =>
   [...live.devices.values()].sort((a, b) => a.display_no - b.display_no || a.device_id - b.device_id),
 )
 const selected = ref(new Set<number>())
+// Скрытые со стенда платы снимаются с выбора, иначе их не видно, а запуск их включит
+watch(devices, (list) => {
+  const shown = new Set(list.map((d) => d.device_id))
+  if ([...selected.value].some((id) => !shown.has(id))) {
+    selected.value = new Set([...selected.value].filter((id) => shown.has(id)))
+  }
+})
 const lastPicked = ref<number | null>(null)
 const fullPattern = ref(false)
 const fullMemtester = ref(false)
@@ -366,12 +373,36 @@ function identify() {
 
 function benchCheck() {
   let ids = [...selected.value]
-  if (!ids.length) ids = devices.value.filter((d) => d.is_golden).map((d) => d.device_id)
+  let note = ''
   if (!ids.length) {
-    say('Выберите эталонную плату или отметьте golden sample в карточке платы', true)
-    return
+    // Без выбора — все эталоны на связи; эталон без связи в партию не попадает (иначе партия ждёт его)
+    const golden = devices.value.filter((d) => d.is_golden)
+    const off = golden.filter((d) => !d.online)
+    ids = golden.filter((d) => d.online).map((d) => d.device_id)
+    if (off.length) note = `. Эталоны без связи не проверяются: ${off.map((d) => d.display_no).join(', ')}`
+    if (!ids.length) {
+      say(
+        off.length
+          ? `Эталонные платы без связи: ${off.map((d) => d.display_no).join(', ')}. Подключите или выберите плату`
+          : 'Выберите эталонную плату или отметьте golden sample в карточке платы',
+        true,
+      )
+      return
+    }
   }
-  void guarded(() => startBatch('test_only', ids, 'golden'))
+  void guarded(async () => {
+    await startBatch('test_only', ids, 'golden')
+    if (note) say(`Проверка стенда запущена, плат: ${ids.length}${note}`, false, true)
+  })
+}
+
+function refreshGrid() {
+  void guarded(async () => {
+    const r = await api.refreshGrid()
+    const parts = [`скрыто плат без связи: ${r.hidden}`, `переподключаются: ${r.reconnect}`]
+    if (r.kept_busy) parts.push(`не скрыты (есть задание, нажмите «Остановить»): ${r.kept_busy}`)
+    say(parts.join('; '), false, !!r.kept_busy)
+  })
 }
 
 function exportCsv() {
@@ -410,6 +441,13 @@ function exportCsv() {
       </div>
       <div class="group">
         <button @click="selectAllOnline">Выбрать все online</button>
+        <button
+          :disabled="busy"
+          title="Убрать со стенда платы без связи (их итоги остаются в истории) и заново опросить подключённые платы: IP, MAC, тип платы"
+          @click="refreshGrid"
+        >
+          Скрыть офлайн, обнаружить онлайн платы
+        </button>
         <button :disabled="!selected.size" @click="clearSelection">Снять выбор</button>
         <span class="selcount">выбрано: {{ selected.size }}</span>
         <label v-if="selected.size" class="chk" title="Если стенд определил тип платы неверно. «Авто» — снова по подключению: встроенный Ethernet — NAPI-C, USB-адаптер — NAPI-P.">

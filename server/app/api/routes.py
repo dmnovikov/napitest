@@ -204,6 +204,11 @@ def device(device_id: int, request: Request, op: dict = Depends(operator)):
         return handle(exc)
 
 
+@router.post("/devices/refresh")
+async def refresh_grid(request: Request, op: dict = Depends(operator)):
+    return await core(request).factory.refresh_grid(op)
+
+
 @router.post("/devices/{device_id}/identify")
 async def identify(device_id: int, request: Request, op: dict = Depends(operator)):
     try:

@@ -1,7 +1,8 @@
 export type StageName = 'ram' | 'net' | 'sdnand' | 'flash' | 'boot'
 export type StageState = 'pending' | 'running' | 'pass' | 'fail' | 'skipped' | 'error' | 'interrupted'
 export type Mode = 'test_only' | 'test_flash' | 'flash_only'
-export type Tile = 'ready' | 'busy' | 'awaiting_boot' | 'pass' | 'fail' | 'offline' | 'interrupted' | 'incomplete'
+export type Tile =
+  | 'ready' | 'busy' | 'awaiting_boot' | 'pass' | 'boot_unconfirmed' | 'fail' | 'offline' | 'interrupted' | 'incomplete'
 export type JobStatus =
   | 'queued' | 'running' | 'awaiting_boot' | 'pass' | 'fail' | 'interrupted' | 'cancelled' | 'offline' | 'incomplete'
 
@@ -103,6 +104,8 @@ export interface Summary {
   incomplete?: number | null
   /** Из PASS — с замечаниями. */
   pass_warn?: number | null
+  /** PASS, но загрузка с SD-NAND не подтверждена (жёлтые плитки) */
+  boot_unconfirmed?: number | null
   /** Сколько плат оператор поставил на стенд (0: не задано). */
   expected?: number | null
   /** Меню «ОС для внутреннего накопителя» и образы. */

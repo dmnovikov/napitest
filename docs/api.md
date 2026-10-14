@@ -194,6 +194,12 @@ Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os"
 `BOOTCHECK: загрузка не подтверждена` (или `… — плата загрузилась с microSD`). Если плата появится с SD-NAND
 в течение 2 ч, этап становится `pass`, замечание снимается. Опция запуска `boot: skip` убирает этап совсем.
 Старые записи «таймаут BOOT = FAIL» при старте сервера пересчитываются по этому правилу.
+Плата в другой сети (её IP не входит в сети `/proc/net/route` без шлюза) по MAC не видна: SSH проверяется по её
+прежнему IP, при успехе BOOT: pass с замечанием `MAC не проверен: плата в другой сети, найдена по прежнему IP`.
+Если агент подключался не со своего IP (плата за NAT), сервер её не увидит: как только плата ушла со связи, этап
+`boot` сразу `skipped` с замечанием `BOOTCHECK: плата за роутером (NAT), …`, итог PASS.
+PASS с неподтверждённой загрузкой показывается плиткой `boot_unconfirmed` (оранжевая, не брак) и считается в
+`summary.boot_unconfirmed`, а не в `pass`.
 Сбои стенда (нет очереди iperf3, сервер не ответил/отказал при FLASH) дают итог `incomplete`, а не `fail`.
 Серийник при `serial.source: cpuid` равен ID чипа (в ОС: `/proc/device-tree/serial-number`) и в плату не пишется.
 
@@ -222,13 +228,14 @@ Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os"
 | GET | `/auth/me` | `{"username"}` |
 | GET | `/state` | полный снимок для главного экрана (как `snapshot` в UI WS); у незавершённых заданий `eta_s`/`eta_partial` (прогноз по медиане этапов прошлых заданий того же варианта), в `summary.active` — идущие партии с `eta_at` |
 | GET | `/public` | без входа: `{"active":[…идущие партии…],"sd_image":{file,size,version,built_at,sha256}|null}` — предупреждение на странице входа и ссылка на образ в инструкции |
-| POST | `/batches` | запуск: `{"mode","device_ids":[…],"confirm":true,"kind":"production"|"golden","options":{"sdnand_pattern":"quick"|"full","memtester":"quick"|"full","net":"quick"|"full","boot":"check"|"skip","os":"<key>"|"zero"|"sd"|"custom","zero":"quick"|"full"}}` (net full: ещё TCP iperf3; quick: только UDP-поток на udp_rate_mbps по udp_seconds в каждую сторону) |
+| POST | `/batches` | запуск: `{"mode","device_ids":[…],"confirm":true,"kind":"production"|"golden","options":{"sdnand_pattern":"quick"|"full","memtester":"quick"|"full","net":"quick"|"full","boot":"check"|"skip","os":"<key>"|"zero"|"sd"|"custom","zero":"quick"|"full"}}` (net full: ещё TCP iperf3; quick: только UDP-поток на udp_rate_mbps по udp_seconds в каждую сторону). Платы без связи не принимаются: 409 «нет связи с платами …» |
 | POST | `/batches/{id}/stop` | «Остановить»: `{"device_ids":[…]}` (пусто = вся партия) |
 | POST | `/stop` | «Остановить» для выбранных плат: `{"device_ids":[…]}` |
 | GET | `/batches` | история партий |
 | GET | `/batches/{id}` | детали партии с заданиями |
 | GET | `/batches/{id}/export.csv`, `/batches/{id}/export.json` | отчёт |
 | GET | `/devices/{id}` | карточка платы |
+| POST | `/devices/refresh` | «Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки до следующего подключения, свободные агенты переподключаются; ответ `{"hidden","kept_busy","reconnect"}` |
 | POST | `/devices/{id}/identify` | мигание LED |
 | POST | `/devices/{id}/golden` | `{"is_golden": true}` |
 | GET | `/devices/{id}/label` | HTML-этикетка с QR (только при PASS и наличии серийника) |
@@ -253,7 +260,7 @@ Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os"
   "serial": "NC-2610-0017", "online": true, "last_seen": "2026-10-10T12:00:03Z",
   "ip": "…", "mac": "…", "mac_source": "…", "agent_version": "…", "test_sd_version": "…",
   "kernel": "…", "ram_bytes": 536870912, "has_led": false, "simulated": false, "is_golden": false,
-  "tile": "ready",  // ready | busy | awaiting_boot | pass | fail | offline | interrupted
+  "tile": "ready",  // ready | busy | awaiting_boot | pass | boot_unconfirmed | fail | offline | interrupted | incomplete
   "job": {
     "job_id": "j_…", "batch_id": 3, "mode": "test_flash", "status": "running",
     "started_at": "…", "finished_at": null, "elapsed": 134, "boot_deadline": null,

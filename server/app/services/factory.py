@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import secrets
 import time
@@ -31,7 +32,9 @@ BOOT_TIMEOUT_TEXTS = ("BOOTCHECK: нет отчёта загрузки", "BOOTCH
 # Загрузка не подтверждена за время ожидания: это не дефект (оператор мог не успеть) — PASS с замечанием
 BOOT_UNCONFIRMED = "BOOTCHECK: загрузка не подтверждена"
 BOOT_UNCONFIRMED_SD = "BOOTCHECK: не подтверждена — плата загрузилась с microSD"
-BOOT_UNCONFIRMED_TEXTS = (BOOT_UNCONFIRMED, BOOT_UNCONFIRMED_SD)
+BOOT_NAT = "BOOTCHECK: плата за роутером (NAT), сервер её не видит — проверьте загрузку вручную"
+BOOT_BY_IP = "MAC не проверен: плата в другой сети, найдена по прежнему IP"
+BOOT_UNCONFIRMED_TEXTS = (BOOT_UNCONFIRMED, BOOT_UNCONFIRMED_SD, BOOT_NAT)
 FINAL_STATUSES = ("pass", "fail", "interrupted", "cancelled", "offline", "incomplete")
 # Итог задания от агента может заменить эти статусы (например, после долгого офлайна).
 OVERRIDABLE_STATUSES = ("queued", "running", "offline")
@@ -110,8 +113,10 @@ class Factory:
         self.early_boot: dict[str, dict] = {}    # job_id -> отчёт первой загрузки, пришедший раньше итога FLASH
         self.bootnet = BootNet(port=int(profile.section("boot").get("probe_port", 22)))
         self.boot_state: dict[str, dict] = {}    # job_id -> состояние сетевой проверки BOOT
+        self.peer_ip: dict[int, str | None] = {}  # device_id -> адрес, с которого пришёл агент (NAT: не его IP)
         self.dirty: set[int] = set()
         self.summary_dirty = False
+        self.grid_reset = False    # сетка поменялась целиком («Скрыть офлайн»): браузерам — новый snapshot
         ports = [profile.iperf_base_port + i for i in range(profile.net_parallel)]
         lease = float(profile.section("net").get("iperf_seconds", 10)) * 2 + 120
         self.net = NetScheduler(ports, lease_s=lease)
@@ -374,14 +379,21 @@ class Factory:
             # Прошита и ушла со связи (загрузилась с SD-NAND, агента там нет) — показываем итог, а не «нет связи»
             if job is not None and job["status"] == "pass" and (self.job_stages(job).get("flash") or {}).get(
                     "state") == "pass":
-                return "pass"
+                return self._pass_tile(job)
             return "offline"
         if job is None:
             return "ready"
+        if job["status"] == "pass":
+            return self._pass_tile(job)
         return {
             "queued": "busy", "running": "busy", "pass": "pass", "fail": "fail",
             "interrupted": "interrupted", "offline": "interrupted", "incomplete": "incomplete",
         }.get(job["status"], "ready")
+
+    def _pass_tile(self, job) -> str:
+        """PASS, но загрузка с SD-NAND не подтверждена: жёлтая плитка, а не зелёная (дефект не доказан)."""
+        boot = self.job_stages(job).get("boot") or {}
+        return "boot_unconfirmed" if boot.get("detail") in BOOT_UNCONFIRMED_TEXTS else "pass"
 
     def device_view(self, dev) -> dict:
         job = self._latest_job(dev["id"])
@@ -435,14 +447,28 @@ class Factory:
                 "finished_at": job["finished_at"], "batch": batch["name"] if batch else None,
                 "detail": detail, "warnings_count": self.job_view(job).get("warnings_count", 0)}
 
+    def _grid_since(self) -> str:
+        """С какого момента плата без связи ещё видна в сетке."""
+        return to_iso(datetime.now(timezone.utc) - timedelta(hours=self.settings.grid_window_h))
+
+    def _grid_hidden(self) -> set[int]:
+        """Платы, скрытые кнопкой «Скрыть офлайн» (до следующего подключения)."""
+        row = self.db.one("SELECT value FROM meta WHERE key = 'grid_hidden'")
+        return set(loads(row["value"], [])) if row else set()
+
+    def _set_grid_hidden(self, ids: set[int]) -> None:
+        self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('grid_hidden', ?)", (dumps(sorted(ids)),))
+
     def _visible_devices(self) -> list:
-        since = to_iso(datetime.now(timezone.utc) - timedelta(hours=self.settings.grid_window_h))
-        rows = self.db.all(
-            "SELECT * FROM device WHERE last_seen >= ? OR id IN"
+        since = self._grid_since()
+        hidden = self._grid_hidden()
+        rows = [r for r in self.db.all(
+            "SELECT *, id IN (SELECT device_id FROM job WHERE status IN ('queued','running','awaiting_boot'))"
+            " AS has_active FROM device WHERE last_seen >= ? OR id IN"
             " (SELECT device_id FROM job WHERE status IN ('queued','running','awaiting_boot'))"
             " ORDER BY display_no, id",
             (since,),
-        )
+        ) if r["has_active"] or r["id"] not in hidden]
         online_ids = {d for d in self.agents if self.is_online(d)}
         known = {r["id"] for r in rows}
         extra = [d for d in online_ids if d not in known]
@@ -458,14 +484,14 @@ class Factory:
     def summary(self, devices: list[dict] | None = None, operator: str | None = None) -> dict:
         devices = devices if devices is not None else self.devices_view()
         counts = {"total": len(devices), "online": 0, "busy": 0, "pass": 0, "fail": 0, "offline": 0,
-                  "interrupted": 0, "incomplete": 0, "pass_warn": 0}
+                  "interrupted": 0, "incomplete": 0, "pass_warn": 0, "boot_unconfirmed": 0}
         for d in devices:
             if d["online"]:
                 counts["online"] += 1
             tile = d["tile"]
             if tile in ("busy", "awaiting_boot"):
                 counts["busy"] += 1
-            elif tile in ("pass", "fail", "offline", "interrupted", "incomplete"):
+            elif tile in ("pass", "fail", "offline", "interrupted", "incomplete", "boot_unconfirmed"):
                 counts[tile] += 1
             if tile == "pass" and (d["job"] or {}).get("warnings_count"):
                 counts["pass_warn"] += 1
@@ -581,11 +607,7 @@ class Factory:
     # ------------------------------------------------------------------ агент: подключение
 
     def _assign_display_no(self, device_id: int) -> int:
-        since = to_iso(datetime.now(timezone.utc) - timedelta(hours=self.settings.grid_window_h))
-        used = {r["display_no"] for r in self.db.all(
-            "SELECT display_no FROM device WHERE id != ? AND display_no IS NOT NULL AND last_seen >= ?",
-            (device_id, since),
-        )}
+        used = {r["display_no"] for r in self._visible_devices() if r["id"] != device_id and r["display_no"]}
         n = 1
         while n in used:
             n += 1
@@ -643,8 +665,10 @@ class Factory:
             display_no = self._assign_display_no(device_id)
         else:
             device_id = dev["id"]
-            since = datetime.now(timezone.utc) - timedelta(hours=self.settings.grid_window_h)
-            stale = parse_iso(dev["last_seen"]) < since
+            hidden = self._grid_hidden()
+            stale = dev["last_seen"] < self._grid_since() or device_id in hidden
+            if device_id in hidden:
+                self._set_grid_hidden(hidden - {device_id})
             display_no = dev["display_no"] if dev["display_no"] and not stale else self._assign_display_no(device_id)
             self.db.execute(
                 "UPDATE device SET " + ", ".join(f"{k} = ?" for k in fields) + " WHERE id = ?",
@@ -666,6 +690,8 @@ class Factory:
                 pass
         conn.device_id = device_id
         conn.cpuid = cpuid
+        client = getattr(conn.ws, "client", None)
+        self.peer_ip[device_id] = getattr(client, "host", None)
         conn.mac = msg.get("mac")
         conn.stream = msg.get("stream")
         self.agents[device_id] = conn
@@ -987,9 +1013,12 @@ class Factory:
         missing = set(device_ids) - {r["id"] for r in rows}
         if missing:
             raise FactoryError("неизвестные платы", 404, sorted(missing))
+        offline = [d for d in device_ids if not self.is_online(d)]
+        if offline:
+            raise FactoryError(f"нет связи с платами {self._nos(offline)}: снимите их с выбора", 409, offline)
         busy = [d for d in device_ids if self._active_job(d) is not None]
         if busy:
-            raise FactoryError("у части плат уже есть активное задание", 409, busy)
+            raise FactoryError(f"у плат {self._nos(busy)} уже есть активное задание", 409, busy)
         if kind == "production" and not (options or {}).get("allow_retest"):
             seen = self.previously_tested(device_ids, mode)
             if seen:
@@ -1054,6 +1083,44 @@ class Factory:
             await self._dispatch_queued(device_id)
             self.mark(device_id)
         return {"batch_id": batch_id, "name": name, "job_ids": job_ids}
+
+    def _nos(self, device_ids: list[int]) -> str:
+        """Номера плат на стенде для сообщений оператору."""
+        rows = self.db.all(f"SELECT id, display_no FROM device WHERE id IN ({','.join('?' * len(device_ids))})",
+                           device_ids)
+        nos = {r["id"]: r["display_no"] for r in rows}
+        return ", ".join(str(nos.get(d) or d) for d in device_ids)
+
+    def _seen_since(self, device_id: int, since: str) -> bool:
+        row = self.db.one("SELECT last_seen FROM device WHERE id = ?", (device_id,))
+        return bool(row) and row["last_seen"] >= since
+
+    async def refresh_grid(self, operator: dict) -> dict:
+        """«Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки
+        (история остаётся), свободные агенты переподключаются и заново присылают IP, MAC и тип платы."""
+        visible = self._visible_devices()
+        hidden, kept = [], []
+        for dev in visible:
+            if self.is_online(dev["id"]):
+                continue
+            (kept if self._active_job(dev["id"]) is not None else hidden).append(dev["id"])
+        since = self._grid_since()
+        self._set_grid_hidden({d for d in self._grid_hidden() if d not in hidden and self._seen_since(d, since)}
+                              | set(hidden))
+        reconnect = []
+        idle = [d for d in self.agents if self.is_online(d) and self._active_job(d) is None
+                and not ((self.live.get(d) or {}).get("job_id") and not (self.live.get(d) or {}).get("finished"))]
+        for device_id, conn in list(self.agents.items()):
+            if device_id in idle:
+                conn.closed = True
+                try:
+                    await conn.ws.close(code=4000)
+                except Exception:
+                    pass
+                reconnect.append(device_id)
+        self.audit(operator["username"], "grid_refresh", {"hidden": hidden, "kept_busy": kept, "reconnect": reconnect})
+        self.grid_reset = True
+        return {"hidden": len(hidden), "kept_busy": self._nos(kept) if kept else "", "reconnect": len(reconnect)}
 
     def previously_tested(self, device_ids: list[int], mode: str) -> list[dict]:
         """Платы, которые уже проходили этот вид проверки (по cpuid в базе).
@@ -1314,17 +1381,25 @@ class Factory:
                                       if st["left"] else self._boot_wait_text())
                 continue
             st["left"] = True
-            if not dev["mac"]:
+            routed = bool(dev["ip"]) and not self.bootnet.is_local(dev["ip"])
+            if routed and self._behind_nat(dev["id"], dev["ip"]):
+                if not late:
+                    self._set_stage(job["id"], "boot", "skipped", None, BOOT_NAT, warnings=[BOOT_NAT])
+                    await self._finalize(self._job(job["id"]), "pass")
                 continue
-            todo.append((job, late, dev, st))
-            hosts.update(subnet_hosts(dev["ip"]))
+            if not dev["mac"] and not routed:
+                continue
+            todo.append((job, late, dev, st, routed))
+            if not routed:
+                hosts.update(subnet_hosts(dev["ip"]))
         if not todo:
             return
-        await self.bootnet.sweep(sorted(hosts))
+        if hosts:
+            await self.bootnet.sweep(sorted(hosts))
         arp = self.bootnet.arp()
-        for job, late, dev, st in todo:
+        for job, late, dev, st, routed in todo:
             found = None
-            for ip in arp.get(dev["mac"].lower(), []):
+            for ip in [dev["ip"]] if routed else arp.get(dev["mac"].lower(), []):
                 banner = await self.bootnet.ssh_banner(ip)
                 if banner:
                     found = (ip, banner)
@@ -1341,16 +1416,27 @@ class Factory:
             if not late:
                 self._boot_detail(job["id"], st, f"в сети {found[0]}, проверка")
             if now - st["up_since"] >= confirm_s:
-                await self._complete_boot_net(self._job(job["id"]), dev["mac"], found[0], found[1], late)
+                await self._complete_boot_net(self._job(job["id"]), dev["mac"], found[0], found[1], late,
+                                              warnings=[BOOT_BY_IP] if routed else None)
 
-    async def _complete_boot_net(self, job, mac: str, ip: str, banner: str, late: bool) -> None:
+    def _behind_nat(self, device_id: int, ip: str) -> bool:
+        """Агент подключался не со своего IP: между платой и сервером NAT, по сети её не проверить."""
+        peer = self.peer_ip.get(device_id)
+        try:
+            ipaddress.IPv4Address(peer or "")
+        except ValueError:
+            return False
+        return peer != ip
+
+    async def _complete_boot_net(self, job, mac: str, ip: str, banner: str, late: bool,
+                                 warnings: list[str] | None = None) -> None:
         flash_row = self._stage_rows(job["id"]).get("flash")
         flashed_at = parse_iso(flash_row["updated_at"]) if flash_row else None
         t = int((datetime.now(timezone.utc) - flashed_at).total_seconds()) if flashed_at else None
-        self._set_stage(job["id"], "boot", "pass", t, f"загрузка с SD-NAND, в сети {ip}",
-                        {"method": "network", "ip": ip, "mac": mac, "ssh_banner": banner})
         if late:
             self._clear_boot_warning(job["id"])
+        self._set_stage(job["id"], "boot", "pass", t, f"загрузка с SD-NAND, в сети {ip}",
+                        {"method": "network", "ip": ip, "mac": mac, "ssh_banner": banner}, warnings=warnings)
         await self._finalize(job, "pass", detail="" if late else None)
         self.audit(None, "boot_net", {"device_id": job["device_id"], "job_id": job["id"], "ip": ip, "late": late})
 
@@ -1414,6 +1500,17 @@ class Factory:
     # ------------------------------------------------------------------ браузер
 
     async def broadcast_pending(self) -> None:
+        if self.grid_reset:
+            self.grid_reset = False
+            self.dirty.clear()
+            self.summary_dirty = False
+            msg = {"type": "snapshot", **self.state()}
+            for ws in list(self.ui_clients):
+                try:
+                    await ws.send_json(msg)
+                except Exception:
+                    self.ui_clients.discard(ws)
+            return
         if not self.ui_clients or (not self.dirty and not self.summary_dirty):
             self.dirty.clear()
             self.summary_dirty = False

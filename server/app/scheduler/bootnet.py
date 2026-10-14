@@ -3,6 +3,8 @@
 MAC NAPI-C выводится из cpuid и одинаков в тестовой и финальной системе. Пока задание
 ждёт BOOT, сервер опрашивает подсеть платы (UDP-пакет на каждый адрес заполняет ARP),
 ищет в /proc/net/arp IP с MAC платы и проверяет, что там отвечает SSH (Armbian).
+Плата в другой сети (за роутером) по MAC не видна: тогда SSH проверяется по её прежнему IP,
+а если плата за NAT (агент пришёл не со своего IP) — проверка сразу пропускается с замечанием.
 """
 from __future__ import annotations
 
@@ -43,12 +45,47 @@ def subnet_hosts(ip: str | None, prefix: int = 24) -> list[str]:
     return [str(h) for h in net.hosts()]
 
 
+def _le(v: int) -> ipaddress.IPv4Address:
+    return ipaddress.IPv4Address(v.to_bytes(4, "little"))
+
+
+def parse_routes(text: str) -> list[ipaddress.IPv4Network]:
+    """/proc/net/route → сети, подключённые напрямую (без шлюза): только в них сервер видит MAC через ARP."""
+    nets = []
+    for line in text.splitlines()[1:]:
+        f = line.split()
+        if len(f) < 8:
+            continue
+        try:
+            dest, gw, mask = (int(x, 16) for x in (f[1], f[2], f[7]))
+        except ValueError:
+            continue
+        if gw or not dest:
+            continue
+        try:
+            nets.append(ipaddress.IPv4Network((dest.to_bytes(4, "little"), str(_le(mask))), strict=False))
+        except ValueError:
+            continue
+    return nets
+
+
 class BootNet:
     """Сетевые операции (подменяются в тестах)."""
 
-    def __init__(self, arp_path: str = "/proc/net/arp", port: int = 22):
+    def __init__(self, arp_path: str = "/proc/net/arp", port: int = 22, route_path: str = "/proc/net/route"):
         self.arp_path = arp_path
+        self.route_path = route_path
         self.port = port
+
+    def is_local(self, ip: str | None) -> bool:
+        """IP платы в сети сервера (ищем по MAC через ARP). Неизвестный IP или таблица — как раньше, локальный."""
+        try:
+            addr = ipaddress.IPv4Address(ip or "")
+            with open(self.route_path) as f:
+                nets = parse_routes(f.read())
+        except (ValueError, OSError):
+            return True
+        return not nets or any(addr in n for n in nets)
 
     async def sweep(self, hosts: list[str]) -> None:
         if not hosts:

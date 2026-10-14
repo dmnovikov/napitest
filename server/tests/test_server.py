@@ -187,12 +187,13 @@ def test_boot_timeout(tmp_path):
         jid = a.recv("job")["job_id"]
         a.pass_stage(jid, "flash")
         a.event(jid, "job_finished", data={"result": "pass"})
-        # загрузка не подтверждена — не дефект: PASS с замечанием, CHECKB серый
-        d = wait_for(lambda: (x := device(c, "CPU0001"))["tile"] == "pass" and x, timeout=5)
+        # загрузка не подтверждена — не дефект: PASS с замечанием, плитка жёлтая (не зелёная и не красная)
+        d = wait_for(lambda: (x := device(c, "CPU0001"))["tile"] == "boot_unconfirmed" and x, timeout=5)
         b = d["job"]["stages"]["boot"]
         assert b["state"] == "skipped" and b["detail"] == "BOOTCHECK: загрузка не подтверждена"
         assert d["job"]["warnings_count"] == 1
-        assert c.get("/api/v1/state").json()["summary"]["fail"] == 0
+        summ = c.get("/api/v1/state").json()["summary"]
+        assert summ["fail"] == 0 and summ["pass"] == 0 and summ["boot_unconfirmed"] == 1
         # отчёт пришёл позже: BOOTCHECK пройден, замечание снято
         assert boot(c, "CPU0001")["job_id"] == jid
         j = c.get(f"/api/v1/jobs/{jid}").json()

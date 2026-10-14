@@ -2,7 +2,8 @@
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.scheduler.bootnet import parse_arp, subnet_hosts
+from app.scheduler.bootnet import BootNet, parse_arp, subnet_hosts
+from app.services.factory import BOOT_BY_IP, BOOT_NAT
 
 from conftest import Agent, make_settings, wait_for
 
@@ -20,10 +21,28 @@ def test_parse_arp_and_hosts():
     assert subnet_hosts(None) == [] and subnet_hosts("bad") == []
 
 
+ROUTE = """Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+enp1s0\t00000000\tFE10A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0
+enp1s0\t0010A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
+"""
+
+
+def test_is_local_by_routes(tmp_path):
+    (tmp_path / "route").write_text(ROUTE)
+    net = BootNet(route_path=str(tmp_path / "route"))
+    assert net.is_local("192.168.16.174") and not net.is_local("192.168.55.69")
+    assert net.is_local(None) and BootNet(route_path=str(tmp_path / "none")).is_local("192.168.55.69")
+
+
 class FakeNet:
     def __init__(self):
         self.up = False
         self.swept = 0
+        self.local = True
+        self.probed = []
+
+    def is_local(self, ip):
+        return self.local
 
     async def sweep(self, hosts):
         self.swept += 1
@@ -32,6 +51,7 @@ class FakeNet:
         return {"02:00:00:00:00:01": ["10.0.0.9"]} if self.up else {}
 
     async def ssh_banner(self, ip, timeout=2.0):
+        self.probed.append(ip)
         return "SSH-2.0-OpenSSH_10.2p1 Ubuntu-2ubuntu3.6" if self.up else None
 
 
@@ -47,9 +67,9 @@ def boot_stage(c, jid):
     return {s["stage"]: s for s in c.get(f"/api/v1/jobs/{jid}").json()["stages"]}["boot"]
 
 
-def flashed(c):
+def flashed(c, **kw):
     c.post("/api/v1/auth/login", json={"username": "admin", "password": "secret-pass"})
-    a = Agent(c)
+    a = Agent(c, **kw)
     r = c.post("/api/v1/batches", json={"mode": "flash_only", "device_ids": [a.ack["device_id"]], "confirm": True})
     assert r.status_code == 200, r.text
     jid = a.recv("job")["job_id"]
@@ -105,6 +125,7 @@ def test_boot_network_timeout_then_late(tmp_path):
         wait_for(lambda: boot_stage(c, jid)["state"] == "skipped")
         assert c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass"
         assert boot_stage(c, jid)["warnings"] == ["BOOTCHECK: загрузка не подтверждена"]
+        assert c.get("/api/v1/state").json()["devices"][0]["tile"] == "boot_unconfirmed"   # жёлтая, не зелёная
         net.up = True                                     # плата всё же загрузилась с SD-NAND
         wait_for(lambda: boot_stage(c, jid)["state"] == "pass")
         assert boot_stage(c, jid)["warnings"] == []
@@ -158,3 +179,32 @@ def test_old_counter_serial_becomes_cpuid(tmp_path):
         assert d["serial"] == "CPU0001"
         log = c.get("/api/v1/audit").json()
         assert any(x["action"] == "serial_reassigned" and x["detail"]["old"] == "NC-2610-0001" for x in log)
+
+
+def test_boot_routed_by_ip(tmp_path):
+    """Плата в другой сети без NAT: MAC через ARP не виден, SSH проверяется по её прежнему IP."""
+    app, net = make(tmp_path)
+    net.local = False
+    with TestClient(app) as c:
+        a, jid = flashed(c, ip="192.168.55.69")
+        a.close()
+        wait_for(lambda: boot_stage(c, jid)["detail"] == "ждём загрузки с SD-NAND")
+        net.up = True
+        wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass")
+        b = boot_stage(c, jid)
+        assert b["state"] == "pass" and b["warnings"] == [BOOT_BY_IP] and set(net.probed) == {"192.168.55.69"}
+        assert net.swept == 0
+
+
+def test_boot_behind_nat_skipped_at_once(tmp_path):
+    """Агент пришёл с адреса роутера: плату не увидеть, BOOT пропускается сразу, без получасового ожидания."""
+    app, net = make(tmp_path)
+    net.local = False
+    with TestClient(app) as c:
+        a, jid = flashed(c, ip="192.168.55.69")
+        app.state.core.factory.peer_ip[a.ack["device_id"]] = "192.168.16.254"
+        a.close()
+        wait_for(lambda: c.get(f"/api/v1/jobs/{jid}").json()["status"] == "pass")
+        b = boot_stage(c, jid)
+        assert b["state"] == "skipped" and b["warnings"] == [BOOT_NAT] and net.probed == []
+        assert c.get("/api/v1/state").json()["devices"][0]["tile"] == "boot_unconfirmed"
