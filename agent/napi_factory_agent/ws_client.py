@@ -165,8 +165,8 @@ class WSLink:
 
     # --- основной цикл ----------------------------------------------------
     async def _resolve(self) -> str | None:
-        if self.url and (self._fails < 3 or not (self.mdns or self.discovery_port)):
-            return self.url
+        """Адрес сервера: сначала широковещательный запрос (сервер отвечает своим адресом в сети платы,
+        у сервера их бывает несколько), затем server_url из agent.yaml, затем mDNS."""
         if self._found and self._fails < 3:
             return self._found
         self._found = None
@@ -176,15 +176,16 @@ class WSLink:
                 log.info("сервер найден широковещательным запросом: %s", urls[0])
                 self._found, self._fails = urls[0], 0
                 return self._found
+        if self.url:
+            return self.url
         if self.mdns:
             urls = await asyncio.to_thread(browse_mdns)
             if urls:
                 log.info("mDNS: %s", urls[0])
                 self._found, self._fails = urls[0], 0
                 return self._found
-        if not self.url:
-            log.info("сервер не найден (UDP %s, mDNS), повтор", self.discovery_port or "выкл")
-        return self.url or None
+        log.info("сервер не найден (UDP %s, mDNS), повтор", self.discovery_port or "выкл")
+        return None
 
     async def run_forever(self) -> None:
         backoff = 1.0

@@ -74,8 +74,13 @@ export const api = {
       os?: string
       zero?: 'quick' | 'full'
       allow_retest?: boolean
+      /** «Без проверки сети» */
+      net_skip?: boolean
+      /** Тип плат для всей партии (запоминается у плат); не задан — как определено у каждой */
+      board?: BoardType
     }
-  }) => request<unknown>('POST', '/batches', body),
+  }) => request<{ warnings?: string[] }>('POST', '/batches', body),
+  retryBoot: (device_ids: number[]) => request<{ jobs: number }>('POST', '/devices/bootcheck', { device_ids }),
   stop: (device_ids: number[]) => request<unknown>('POST', '/stop', { device_ids }),
   stopBatch: (id: number, device_ids: number[] = []) =>
     request<unknown>('POST', `/batches/${id}/stop`, { device_ids }),

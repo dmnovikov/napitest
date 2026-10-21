@@ -51,3 +51,24 @@ def test_discovery_public_url():
             await r.stop()
     rep = asyncio.run(go())
     assert rep["http"] == "https://factory.example:8443" and rep["ws"] == "wss://factory.example:8443/ws/agent"
+
+
+def test_discovery_direct_network_beats_public_url(tmp_path):
+    from app.discovery import _Protocol
+    # 192.168.55.0/24 подключена напрямую, 10.0.0.0/8 — через шлюз
+    routes = tmp_path / "route"
+    routes.write_text(
+        "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+        "enp2s0\t0037A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\n"
+        "enp1s0\t0000000A\t0110A8C0\t0003\t0\t0\t0\t000000FF\n")
+    p = _Protocol(8080, "http://192.168.16.100:8080", route_path=str(routes))
+    import app.discovery as d
+    real = d.local_ip_for
+    d.local_ip_for = lambda peer: "192.168.55.100" if peer.startswith("192.168.55.") else "192.168.16.100"
+    try:
+        near = p.reply_for(b'{"type":"napi_discover"}', "192.168.55.80")
+        far = p.reply_for(b'{"type":"napi_discover"}', "10.1.2.3")
+    finally:
+        d.local_ip_for = real
+    assert near["ws"] == "ws://192.168.55.100:8080/ws/agent"
+    assert far["ws"] == "ws://192.168.16.100:8080/ws/agent"

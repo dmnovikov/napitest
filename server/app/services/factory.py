@@ -99,6 +99,22 @@ def verdict(enabled: dict[str, bool], stages: dict[str, dict], include_boot: boo
     return None
 
 
+def net_only_fail(enabled: dict[str, bool], stages: dict[str, dict]) -> bool:
+    """«Тесты + прошивка»: не прошла только сеть, а прошивка прошла — плату ведут дальше, на BOOTCHECK
+    (сеть часто подводит стенд, а не плата); итог задания всё равно FAIL."""
+    st = {s: (stages.get(s) or {}).get("state", "pending") for s in STAGES if enabled.get(s) and s != "boot"}
+    return (st.get("net") in ("fail", "error") and st.get("flash") == "pass"
+            and all(v == "pass" for k, v in st.items() if k != "net"))
+
+
+def boot_ready(enabled: dict[str, bool], stages: dict[str, dict]) -> bool:
+    """Этапы до BOOT позволяют проверять загрузку: все пройдены или не прошла только сеть."""
+    return verdict(enabled, stages, include_boot=False) == "pass" or net_only_fail(enabled, stages)
+
+
+NET_STAND = "похоже на сеть стенда: NET не прошли почти все платы партии"
+
+
 class Factory:
     def __init__(self, settings: Settings, profile: Profile, db: Database):
         self.settings = settings
@@ -317,8 +333,10 @@ class Factory:
         if job["status"] not in ACTIVE_STATUSES:
             return {}
         params = loads(job["params_json"], {}) or {}
-        total, partial = 0.0, False
+        total, partial, before_boot = 0.0, False, None
         for name in STAGES:
+            if name == "boot":
+                before_boot = total
             st = stages.get(name) or {}
             state = st.get("state")
             if state not in ("pending", "running", "waiting"):
@@ -345,7 +363,12 @@ class Factory:
                 partial = True
                 continue
             total += left
-        return {"eta_s": int(total), "eta_partial": partial}
+        # Когда понадобится оператор: с BOOTCHECK — к началу ожидания загрузки (вынуть microSD), иначе к концу
+        boot = (params.get("stages") or {}).get("boot")
+        op = before_boot if boot and before_boot is not None else total
+        if job["status"] == "awaiting_boot":
+            op = 0.0
+        return {"eta_s": int(total), "eta_partial": partial, "eta_op_s": int(op)}
 
     def active_batches(self) -> list[dict]:
         """Партии с незавершёнными заданиями: кто и когда запустил, сколько плат, когда закончится."""
@@ -355,15 +378,20 @@ class Factory:
             " WHERE j.status IN ('queued','running','awaiting_boot') GROUP BY b.id ORDER BY b.id")
         out = []
         for r in rows:
-            eta, partial = 0, False
+            eta, partial, op = 0, False, None
             for job in self.db.all("SELECT * FROM job WHERE batch_id = ? AND status IN"
                                    " ('queued','running','awaiting_boot')", (r["id"],)):
                 e = self.job_eta(job, self.job_stages(job))
                 eta = max(eta, e.get("eta_s") or 0)
                 partial = partial or bool(e.get("eta_partial"))
+                if (loads(job["params_json"], {}).get("stages") or {}).get("boot"):
+                    op = min(op, e.get("eta_op_s") or 0) if op is not None else e.get("eta_op_s") or 0
+            # Первая плата, которой нужен оператор (BOOTCHECK), иначе конец партии
+            op = min(op, eta) if op is not None else eta
             out.append({"batch_id": r["id"], "name": r["name"], "mode": r["mode"], "kind": r["kind"],
                         "started_at": r["started_at"], "operator": r["username"], "boards": r["boards"],
                         "eta_at": to_iso(datetime.now(timezone.utc) + timedelta(seconds=eta)),
+                        "operator_at": to_iso(datetime.now(timezone.utc) + timedelta(seconds=op)),
                         "eta_partial": partial})
         return out
 
@@ -377,14 +405,16 @@ class Factory:
             return "awaiting_boot"
         if not self.is_online(device_id):
             # Прошита и ушла со связи (загрузилась с SD-NAND, агента там нет) — показываем итог, а не «нет связи»
-            if job is not None and job["status"] == "pass" and (self.job_stages(job).get("flash") or {}).get(
+            if job is not None and job["status"] in ("pass", "fail") and (self.job_stages(job).get("flash") or {}).get(
                     "state") == "pass":
-                return self._pass_tile(job)
+                return self._pass_tile(job) if job["status"] == "pass" else self._fail_tile(job)
             return "offline"
         if job is None:
             return "ready"
         if job["status"] == "pass":
             return self._pass_tile(job)
+        if job["status"] == "fail":
+            return self._fail_tile(job)
         return {
             "queued": "busy", "running": "busy", "pass": "pass", "fail": "fail",
             "interrupted": "interrupted", "offline": "interrupted", "incomplete": "incomplete",
@@ -394,6 +424,22 @@ class Factory:
         """PASS, но загрузка с SD-NAND не подтверждена: жёлтая плитка, а не зелёная (дефект не доказан)."""
         boot = self.job_stages(job).get("boot") or {}
         return "boot_unconfirmed" if boot.get("detail") in BOOT_UNCONFIRMED_TEXTS else "pass"
+
+    def _fail_tile(self, job) -> str:
+        """FAIL только по сети, а сеть не прошли почти все платы партии: серая «сеть стенда?», не красная."""
+        stages = self.job_stages(job)
+        failed = {s for s, st in stages.items() if st.get("state") in ("fail", "error")}
+        return "net_stand" if failed == {"net"} and self._net_stand_batch(job["batch_id"]) else "fail"
+
+    def _net_stand_batch(self, batch_id: int | None) -> bool:
+        """В партии NET не прошли не меньше 3 плат и больше половины плат, у которых сеть проверялась."""
+        if batch_id is None:
+            return False
+        row = self.db.one(
+            "SELECT SUM(s.state IN ('fail','error')) AS f, SUM(s.state = 'pass') AS p FROM stage_result s"
+            " JOIN job j ON j.id = s.job_id WHERE j.batch_id = ? AND s.stage = 'net'", (batch_id,))
+        f, p = (row["f"] or 0, row["p"] or 0) if row else (0, 0)
+        return f >= 3 and f * 2 > f + p
 
     def device_view(self, dev) -> dict:
         job = self._latest_job(dev["id"])
@@ -484,14 +530,15 @@ class Factory:
     def summary(self, devices: list[dict] | None = None, operator: str | None = None) -> dict:
         devices = devices if devices is not None else self.devices_view()
         counts = {"total": len(devices), "online": 0, "busy": 0, "pass": 0, "fail": 0, "offline": 0,
-                  "interrupted": 0, "incomplete": 0, "pass_warn": 0, "boot_unconfirmed": 0}
+                  "interrupted": 0, "incomplete": 0, "pass_warn": 0, "boot_unconfirmed": 0,
+                  "net_stand": 0}
         for d in devices:
             if d["online"]:
                 counts["online"] += 1
             tile = d["tile"]
             if tile in ("busy", "awaiting_boot"):
                 counts["busy"] += 1
-            elif tile in ("pass", "fail", "offline", "interrupted", "incomplete", "boot_unconfirmed"):
+            elif tile in ("pass", "fail", "offline", "interrupted", "incomplete", "boot_unconfirmed", "net_stand"):
                 counts[tile] += 1
             if tile == "pass" and (d["job"] or {}).get("warnings_count"):
                 counts["pass_warn"] += 1
@@ -868,14 +915,29 @@ class Factory:
         self.mark(device_id)
 
     def _check_tested(self, job) -> bool:
-        """TEST_PASS: RAM, NET, SD-NAND пройдены в этом задании."""
+        """TEST_PASS: включённые тесты (RAM, NET, SD-NAND) пройдены в этом задании. Сеть, пропущенная
+        по правилам (NAPI-P, «Без проверки сети»), отметке не мешает."""
         if job["mode"] not in ("test_only", "test_flash"):
             return False
         rows = self._stage_rows(job["id"])
-        if all(rows.get(s) is not None and rows[s]["state"] == "pass" for s in TEST_STAGES):
+        enabled = loads(job["params_json"], {}).get("stages", {})
+        need = [s for s in TEST_STAGES if enabled.get(s, True)]
+        if need and all(rows.get(s) is not None and rows[s]["state"] == "pass" for s in need):
             self.db.execute("UPDATE device SET tested_pass = 1 WHERE id = ?", (job["device_id"],))
             return True
         return False
+
+    def _tests_ok_for_flash(self, job) -> bool:
+        """«Тесты + прошивка»: можно шить — включённые тесты пройдены; FAIL сети прошивке не мешает."""
+        enabled = loads(job["params_json"], {}).get("stages", {})
+        rows = self._stage_rows(job["id"])
+        for s in TEST_STAGES:
+            if not enabled.get(s):
+                continue
+            state = rows[s]["state"] if s in rows else None
+            if state != "pass" and not (s == "net" and state in ("fail", "error")):
+                return False
+        return True
 
     async def _agent_finished(self, job, data: dict) -> None:
         result = data.get("result")
@@ -894,7 +956,7 @@ class Factory:
             await self._finalize(job, "incomplete", detail=data.get("detail"))
             return
         before_boot = verdict(enabled, stages, include_boot=False)
-        if before_boot == "pass" and result == "pass":
+        if (before_boot == "pass" and result == "pass") or (net_only_fail(enabled, stages) and result == "fail"):
             if enabled.get("boot"):
                 deadline = to_iso(datetime.now(timezone.utc) + timedelta(seconds=self.profile.boot_timeout_s))
                 self.db.execute("UPDATE job SET status = 'awaiting_boot', boot_deadline = ? WHERE id = ?",
@@ -913,6 +975,11 @@ class Factory:
         await self._finalize(job, "fail" if before_boot != "interrupted" else "interrupted", detail=detail)
 
     async def _finalize(self, job, status: str, detail: str | None = None) -> None:
+        if status == "pass":
+            # Прошита после FAIL сети: BOOTCHECK пройден или не подтверждён, но итог — FAIL
+            failed = [st for s, st in self.job_stages(job).items() if s != "boot" and st.get("state") in ("fail", "error")]
+            if failed:
+                status, detail = "fail", f"{failed[0].get('detail') or 'FAIL'} · прошита"
         result = status
         self.db.execute(
             "UPDATE job SET status = ?, result = ?, detail = NULLIF(COALESCE(?, detail), ''),"
@@ -968,7 +1035,8 @@ class Factory:
             return reply
         dev = self.db.one("SELECT serial, tested_pass FROM device WHERE id = ?", (device_id,))
         if job["mode"] == "test_flash":
-            if not self._check_tested(job):
+            self._check_tested(job)
+            if not self._tests_ok_for_flash(job):
                 reply["error"] = "tests not passed in this job"
                 return reply
         elif job["mode"] == "flash_only":
@@ -1028,6 +1096,13 @@ class Factory:
             params = self.profile.job_params(mode, options, self.settings.destructive_override, os_flash)
         except ValueError as exc:
             raise FactoryError(str(exc)) from exc
+        # Тип плат для всей партии: запоминается у плат, как «Тип платы» на панели выбора
+        board_opt = (options or {}).get("board") or None
+        warnings: list[str] = []
+        if board_opt is not None:
+            if board_opt not in BOARDS:
+                raise FactoryError("тип плат: napi-c | napi-p | по плате")
+            warnings = self.set_board(operator, device_ids, board_opt)
 
         today = datetime.now(timezone.utc).strftime("%Y%m%d")
         prefix = "G" if kind == "golden" else "B"
@@ -1082,7 +1157,7 @@ class Factory:
         for device_id in device_ids:
             await self._dispatch_queued(device_id)
             self.mark(device_id)
-        return {"batch_id": batch_id, "name": name, "job_ids": job_ids}
+        return {"batch_id": batch_id, "name": name, "job_ids": job_ids, "warnings": warnings}
 
     def _nos(self, device_ids: list[int]) -> str:
         """Номера плат на стенде для сообщений оператору."""
@@ -1196,6 +1271,51 @@ class Factory:
         await conn.send({"type": "identify", "seconds": 10})
         self.audit(operator["username"], "identify", {"device_id": device_id})
 
+    async def retry_boot(self, operator: dict, device_ids: list[int]) -> dict:
+        """«Только BOOTCHECK»: прошитые платы, у которых загрузка с SD-NAND не подтвердилась (оператор
+        не успел вынуть microSD), снова ждут загрузку. Плата без связи — нормально: на ней прошитая ОС."""
+        ids = sorted(set(int(d) for d in device_ids))
+        if not ids:
+            raise FactoryError("не выбрано ни одной платы")
+        jobs, bad = [], []
+        for device_id in ids:
+            job = self._latest_job(device_id)
+            reason = self._boot_retry_refusal(job)
+            if reason:
+                bad.append(f"{self._nos([device_id])} — {reason}")
+            else:
+                jobs.append(job)
+        if bad:
+            raise FactoryError("BOOTCHECK не повторить: плата " + "; плата ".join(bad), 409)
+        deadline = to_iso(datetime.now(timezone.utc) + timedelta(seconds=self.profile.boot_timeout_s))
+        for job in jobs:
+            self.db.execute("UPDATE job SET status = 'awaiting_boot', result = NULL, finished_at = NULL,"
+                            " boot_deadline = ? WHERE id = ?", (deadline, job["id"]))
+            self.db.execute("UPDATE batch SET finished_at = NULL WHERE id = ?", (job["batch_id"],))
+            self._clear_boot_warning(job["id"])
+            self.boot_state.pop(job["id"], None)
+            self._set_stage(job["id"], "boot", "running", detail=self._boot_wait_text())
+            self.mark(job["device_id"])
+        self.audit(operator["username"], "boot_retry", {"devices": ids, "jobs": [j["id"] for j in jobs]})
+        return {"jobs": len(jobs)}
+
+    def _boot_retry_refusal(self, job) -> str | None:
+        if job is None:
+            return "заданий не было"
+        if job["status"] in ACTIVE_STATUSES:
+            return "задание ещё идёт" if job["status"] != "awaiting_boot" else "BOOTCHECK уже идёт"
+        if not loads(job["params_json"], {}).get("stages", {}).get("boot"):
+            return "в задании загрузка не проверялась (Zeroimage или «Не проверять загрузку»)"
+        rows = self._stage_rows(job["id"])
+        if (rows.get("flash") or {"state": None})["state"] != "pass":
+            return "сначала прошейте её"
+        if (rows.get("boot") or {"state": None})["state"] == "pass":
+            return "загрузка уже подтверждена"
+        enabled = loads(job["params_json"], {}).get("stages", {})
+        if not boot_ready(enabled, {s: {"state": r["state"]} for s, r in rows.items()}):
+            return "есть FAIL до прошивки"
+        return None
+
     def set_golden(self, operator: dict, device_id: int, is_golden: bool) -> None:
         cur = self.db.execute("UPDATE device SET is_golden = ? WHERE id = ?", (1 if is_golden else 0, device_id))
         if not cur.rowcount:
@@ -1261,7 +1381,7 @@ class Factory:
         enabled = loads(job["params_json"], {}).get("stages", {})
         rows = self._stage_rows(job["id"])
         stages = {s: {"state": r["state"]} for s, r in rows.items()}
-        if verdict(enabled, stages, include_boot=False) == "pass":
+        if boot_ready(enabled, stages):
             # Все этапы до BOOT уже подтверждены событиями; итог задания можно не ждать.
             self.db.execute("UPDATE job SET status = 'awaiting_boot' WHERE id = ?", (job["id"],))
             await self._complete_boot(self._job(job["id"]), payload)
@@ -1300,13 +1420,14 @@ class Factory:
         boot = rows.get("boot")
         if boot is None:
             return None
-        unconfirmed = job["status"] == "pass" and boot["state"] == "skipped" and boot["detail"] in BOOT_UNCONFIRMED_TEXTS
+        # PASS с замечанием; FAIL — если до BOOT не прошла сеть (плата всё равно прошита)
+        unconfirmed = boot["state"] == "skipped" and boot["detail"] in BOOT_UNCONFIRMED_TEXTS
         old_fail = job["status"] == "fail" and boot["state"] == "fail" and boot["detail"] in BOOT_TIMEOUT_TEXTS
         if not (unconfirmed or old_fail):
             return None
         enabled = loads(job["params_json"], {}).get("stages", {})
         stages = {s: {"state": r["state"]} for s, r in rows.items()}
-        return job if verdict(enabled, stages, include_boot=False) == "pass" else None
+        return job if boot_ready(enabled, stages) else None
 
     async def _complete_boot(self, job, payload: dict, late: bool = False) -> None:
         flash_row = self._stage_rows(job["id"]).get("flash")

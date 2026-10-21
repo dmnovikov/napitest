@@ -13,6 +13,7 @@ STAGES = ("ram", "net", "sdnand", "flash", "boot")
 TEST_STAGES = ("ram", "net", "sdnand")
 MODES = ("test_only", "test_flash", "flash_only")
 DESTRUCTIVE_MODES = ("test_flash", "flash_only")
+NET_SKIPPED = "NET пропущен (по выбору оператора)"
 
 
 def _bool(value: str | None, default: bool = False) -> bool:
@@ -164,6 +165,10 @@ class Profile:
         if boot_opt not in ("check", "skip"):
             raise ValueError("boot: check | skip")
         stages = self.stages_for_mode(mode)
+        skip_reason: dict[str, str] = {}
+        if options.get("net_skip") and stages["net"]:
+            stages["net"] = False      # галочка «Без проверки сети» (сеть стенда временно плохая)
+            skip_reason["net"] = NET_SKIPPED
         zero = os_flash.get("method") == "zero"
         if boot_opt == "skip" or zero:
             stages["boot"] = False   # BOOTCHECK не нужен (или грузиться нечему): итог сразу после FLASH
@@ -193,6 +198,7 @@ class Profile:
             "profile": self.name,
             "destructive_enabled": self.hardware_validated or destructive_override,
             "stages": stages,
+            **({"skip_reason": skip_reason} if skip_reason else {}),
             "ram": ram_params,
             "net": {**{k: net[k] for k in (
                 "iface", "expect_speed", "expect_duplex", "iperf_seconds", "min_mbps",

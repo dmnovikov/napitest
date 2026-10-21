@@ -19,6 +19,25 @@ const eta = computed(() => {
   return { text: `${a.eta_partial ? 'не раньше' : '~ в'} ${hhmm(a.eta_at)}`, muted: false }
 })
 
+// «Время на кофе»: сколько можно не подходить к стенду — до первой платы, которой нужен оператор
+// (BOOTCHECK: вынуть microSD), иначе до конца партии
+const coffee = computed(() => {
+  const act = props.summary?.active ?? []
+  if (!act.length) return null
+  const ids = new Set(act.map((a) => a.batch_id))
+  const mine = props.devices.filter((d) => d.job?.batch_id != null && ids.has(d.job.batch_id))
+  if (mine.some((d) => d.tile === 'awaiting_boot' && d.online)) return { text: 'нужен оператор: выньте microSD', need: true }
+  if (mine.some((d) => ['fail', 'net_stand', 'offline', 'interrupted'].includes(d.tile))) {
+    return { text: 'нужен оператор: есть FAIL или плата без связи', need: true }
+  }
+  if (act.some((a) => a.eta_partial)) return { text: '☕ после первых проверок', need: false }
+  const at = Math.min(...act.map((a) => Date.parse(a.operator_at ?? a.eta_at ?? '')).filter((t) => !Number.isNaN(t)))
+  if (!Number.isFinite(at)) return null
+  const min = Math.round((at - now.value) / 60000)
+  if (min < 5) return { text: act.some((a) => a.mode !== 'test_only') ? '☕ не успеете — скоро понадобитесь' : '☕ не успеете — скоро конец', need: false }
+  return { text: `☕ можно отойти на ~${min} мин`, need: false }
+})
+
 const elapsed = computed(() => {
   const b = props.summary?.batch
   if (!b?.started_at) return null
@@ -36,6 +55,7 @@ const counters = computed(() => {
       ? [{ k: 'BOOT ?', v: s.boot_unconfirmed, c: 'c-orange', sub: 'загрузка не подтверждена' }]
       : []),
     { k: 'FAIL', v: s?.fail, c: 'c-red', sub: '' },
+    ...(s?.net_stand ? [{ k: 'Сеть стенда?', v: s.net_stand, c: 'c-gray', sub: 'FAIL только NET' }] : []),
     { k: 'Offline', v: s?.offline, c: 'c-gray', sub: '' },
     { k: 'Прервано', v: s?.interrupted, c: 'c-gray', sub: '' },
     { k: 'Не выполнено', v: s?.incomplete ?? 0, c: 'c-gray', sub: '' },
@@ -70,11 +90,16 @@ const counters = computed(() => {
           <span class="lbl">Закончится:</span>
           <b class="eta" :class="{ muted: eta.muted }" title="Прогноз по длительности этапов прошлых проверок; BOOTCHECK зависит от того, когда плату перезагрузят">{{ eta.text }}</b>
         </template>
+        <span v-if="coffee" class="coffee" :class="{ need: coffee.need }" title="Сколько можно не подходить к стенду: до первой платы, которой нужен оператор (с BOOTCHECK — вынуть microSD), иначе до конца партии">{{ coffee.text }}</span>
       </div>
       <div>
         <span class="lbl">microSD:</span>
         <span class="mono">{{ summary?.versions.test_sd?.length ? summary.versions.test_sd.join(', ') : '—' }}</span>
         <span class="lbl">Образ:</span> <span class="mono">{{ summary?.versions.image ?? '—' }}</span>
+      </div>
+      <div v-if="summary?.net_stand" class="boards warn">
+        ⚠ NET не прошли почти все платы партии — похоже на сеть стенда, а не на брак: проверьте коммутатор, кабель
+        или Wi-Fi до сервера и повторите проверку (или запустите с галочкой «Без проверки сети»)
       </div>
       <div v-if="boards" class="boards" :class="boards.tone">{{ boards.tone === 'ok' ? '✓' : '⚠' }} {{ boards.text }}</div>
     </div>
@@ -166,6 +191,14 @@ const counters = computed(() => {
 }
 .eta {
   color: #6b5200;
+}
+.coffee {
+  margin-left: 10px;
+  color: #6b4f2a;
+}
+.coffee.need {
+  color: #8a4b00;
+  font-weight: 600;
 }
 .eta.muted {
   color: var(--muted);

@@ -82,13 +82,13 @@ def run(ctx: StageCtx) -> StageResult:
     meas["target"] = inv.get("target")
     meas["boot_device"] = inv.get("boot_device")
     if not inv["ok"]:
-        return StageResult("fail", "SD: " + target_summary(inv), meas)
+        return StageResult("fail", "NAND: " + target_summary(inv), meas)
     capacity = int(inv["target_size"])
     meas["capacity_bytes"] = capacity
     rules = p.get("detect") or {}
     smin, smax = int(rules.get("size_min_bytes", 0)), int(rules.get("size_max_bytes", 1 << 62))
     if not smin <= capacity <= smax:
-        return StageResult("fail", f"SD: size {fmt_size(capacity)}≠{fmt_size((smin + smax) // 2)}", meas)
+        return StageResult("fail", f"NAND: size {fmt_size(capacity)}≠{fmt_size((smin + smax) // 2)}", meas)
 
     # Выбор области по режиму
     if ctx.mode == "test_flash" and (ctx.params.get("flash") or {}).get("method") != "zero":
@@ -104,15 +104,15 @@ def run(ctx: StageCtx) -> StageResult:
         try:
             man = load_manifest(ctx.images_dir, fl.get("manifest_file", ""))
         except ManifestError as e:
-            return StageResult("fail", f"SD: {e}", meas)
+            return StageResult("fail", f"NAND: {e}", meas)
         start_at = align_up(int(man["image_size"]), MiB)
         if start_at >= capacity:
-            return StageResult("fail", f"SD: image {fmt_size(start_at)} > {fmt_size(capacity)}", meas)
+            return StageResult("fail", f"NAND: image {fmt_size(start_at)} > {fmt_size(capacity)}", meas)
 
     ok, why = be.destructive_allowed(ctx.params)
     if not ok:
         # Не дефект платы: тест не выполнялся. Серый «пропущен», итог задания «не выполнено».
-        return StageResult("skipped", f"SD: запись запрещена ({why})", {**meas, "blocked": True})
+        return StageResult("skipped", f"NAND: запись запрещена ({why})", {**meas, "blocked": True})
 
     ranges = plan_ranges(pmode, capacity, int(p.get("range_mib", 64)) * MiB,
                          int(p.get("quick_ranges", 3)), start_at)
@@ -136,7 +136,7 @@ def run(ctx: StageCtx) -> StageResult:
         tgt = be.open_target(inv)
     except (TargetMismatch, OSError) as e:
         ctx.log(f"open: {e}")
-        return StageResult("fail", "SD: target mismatch", meas)
+        return StageResult("fail", "NAND: target mismatch", meas)
     try:
         unsynced = 0
         for off, ln in ranges:
@@ -162,14 +162,14 @@ def run(ctx: StageCtx) -> StageResult:
                 if tgt.read_at(pos, n) != pattern_block(seed, pos, n):
                     meas["mismatch_offset"] = pos
                     ctx.log(f"несовпадение на смещении {pos}")
-                    return StageResult("fail", f"SD: mismatch @{fmt_size(pos)}", meas)
+                    return StageResult("fail", f"NAND: mismatch @{fmt_size(pos)}", meas)
                 pos += n
                 done += n
                 ctx.progress(100 * done / (2 * total), f"проверка {100 * done // (2 * total)} %")
         meas["direct_io"] = tgt.direct
     except OSError as e:
         ctx.log(f"I/O error: {e}")
-        return StageResult("fail", "SD: I/O error", meas)
+        return StageResult("fail", "NAND: I/O error", meas)
     finally:
         tgt.close()
     dt = time.monotonic() - t0

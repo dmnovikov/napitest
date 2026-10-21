@@ -1,6 +1,6 @@
 <script setup lang="ts">
-defineProps<{ title: string; message: string; okText?: string; danger?: boolean }>()
-defineEmits<{ (e: 'ok'): void; (e: 'cancel'): void }>()
+defineProps<{ title: string; message: string; okText?: string; danger?: boolean; cancelText?: string; altText?: string }>()
+defineEmits<{ (e: 'ok'): void; (e: 'cancel'): void; (e: 'alt'): void }>()
 </script>
 
 <template>
@@ -9,7 +9,8 @@ defineEmits<{ (e: 'ok'): void; (e: 'cancel'): void }>()
       <h3>{{ title }}</h3>
       <p class="msg">{{ message }}</p>
       <div class="actions">
-        <button @click="$emit('cancel')">Отмена</button>
+        <button @click="$emit('cancel')">{{ cancelText ?? 'Отмена' }}</button>
+        <button v-if="altText" @click="$emit('alt')">{{ altText }}</button>
         <button :class="danger ? 'danger' : 'primary'" autofocus @click="$emit('ok')">
           {{ okText ?? 'Подтвердить' }}
         </button>
@@ -32,8 +33,9 @@ defineEmits<{ (e: 'ok'): void; (e: 'cancel'): void }>()
   background: #fff;
   border-radius: 10px;
   padding: 20px 24px;
-  min-width: 380px;
-  max-width: 560px;
+  min-width: min(380px, calc(100vw - 32px));
+  box-sizing: border-box;
+  max-width: min(560px, calc(100vw - 32px));
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
 }
 h3 {
@@ -45,6 +47,7 @@ h3 {
 }
 .actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
   margin-top: 18px;

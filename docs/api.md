@@ -14,7 +14,9 @@
 {"type":"napi_discover","v":1}
 ```
 
-Сервер отвечает отправителю адресом, по которому он виден из его подсети (или `NAPI_PUBLIC_URL`):
+Сервер отвечает отправителю адресом, по которому он виден из его подсети. `NAPI_PUBLIC_URL` отвечается только
+запросам из сетей, которые сервер не видит напрямую (у сервера бывает несколько сетей). Агент спрашивает сервер
+так первым делом, `server_url` из agent.yaml — запасной адрес, затем mDNS:
 
 ```json
 {"type":"napi_server","v":1,"http":"http://192.168.30.56:8080","ws":"ws://192.168.30.56:8080/ws/agent","version":"0.1.0"}
@@ -200,6 +202,11 @@ Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os"
 `boot` сразу `skipped` с замечанием `BOOTCHECK: плата за роутером (NAT), …`, итог PASS.
 PASS с неподтверждённой загрузкой показывается плиткой `boot_unconfirmed` (оранжевая, не брак) и считается в
 `summary.boot_unconfirmed`, а не в `pass`.
+
+«Тесты + прошивка»: FAIL только сети прошивку не останавливает — плата прошивается и проходит BOOTCHECK, итог
+задания FAIL с `detail` «<причина NET> · прошита». FAIL RAM или SD-NAND прошивку останавливает. Если сеть не прошли
+не меньше 3 плат и больше половины плат партии, у которых она проверялась, такие плитки — `net_stand` (серые
+«сеть стенда?», `summary.net_stand`), а не `fail`: скорее виновата сеть стенда.
 Сбои стенда (нет очереди iperf3, сервер не ответил/отказал при FLASH) дают итог `incomplete`, а не `fail`.
 Серийник при `serial.source: cpuid` равен ID чипа (в ОС: `/proc/device-tree/serial-number`) и в плату не пишется.
 
@@ -226,15 +233,16 @@ PASS с неподтверждённой загрузкой показывает
 | POST | `/auth/login` | вход |
 | POST | `/auth/logout` | выход |
 | GET | `/auth/me` | `{"username"}` |
-| GET | `/state` | полный снимок для главного экрана (как `snapshot` в UI WS); у незавершённых заданий `eta_s`/`eta_partial` (прогноз по медиане этапов прошлых заданий того же варианта), в `summary.active` — идущие партии с `eta_at` |
+| GET | `/state` | полный снимок для главного экрана (как `snapshot` в UI WS); у незавершённых заданий `eta_s`/`eta_partial` (прогноз по медиане этапов прошлых заданий того же варианта), в `summary.active` — идущие партии с `eta_at` и `operator_at` (когда понадобится оператор: первая плата ждёт BOOTCHECK, иначе конец партии) |
 | GET | `/public` | без входа: `{"active":[…идущие партии…],"sd_image":{file,size,version,built_at,sha256}|null}` — предупреждение на странице входа и ссылка на образ в инструкции |
-| POST | `/batches` | запуск: `{"mode","device_ids":[…],"confirm":true,"kind":"production"|"golden","options":{"sdnand_pattern":"quick"|"full","memtester":"quick"|"full","net":"quick"|"full","boot":"check"|"skip","os":"<key>"|"zero"|"sd"|"custom","zero":"quick"|"full"}}` (net full: ещё TCP iperf3; quick: только UDP-поток на udp_rate_mbps по udp_seconds в каждую сторону). Платы без связи не принимаются: 409 «нет связи с платами …» |
+| POST | `/batches` | запуск: `{"mode","device_ids":[…],"confirm":true,"kind":"production"|"golden","options":{"sdnand_pattern":"quick"|"full","memtester":"quick"|"full","net":"quick"|"full","boot":"check"|"skip","os":"<key>"|"zero"|"sd"|"custom","zero":"quick"|"full","net_skip":true,"board":"napi-c"|"napi-p"}}` (net_skip: этап NET пропускается — «NET пропущен (по выбору оператора)»; board: тип для всех плат партии, запоминается у плат как `PUT /devices/board`, в ответе `warnings` — например, NAPI-C через USB-адаптер; net full: ещё TCP iperf3; quick: только UDP-поток на udp_rate_mbps по udp_seconds в каждую сторону). Платы без связи не принимаются: 409 «нет связи с платами …» |
 | POST | `/batches/{id}/stop` | «Остановить»: `{"device_ids":[…]}` (пусто = вся партия) |
 | POST | `/stop` | «Остановить» для выбранных плат: `{"device_ids":[…]}` |
 | GET | `/batches` | история партий |
 | GET | `/batches/{id}` | детали партии с заданиями |
 | GET | `/batches/{id}/export.csv`, `/batches/{id}/export.json` | отчёт |
 | GET | `/devices/{id}` | карточка платы |
+| POST | `/devices/bootcheck` | «Только BOOTCHECK» `{"device_ids":[…]}`: последнее задание каждой платы снова ждёт загрузку с SD-NAND (FLASH пройден, загрузка не подтверждена); платы без связи допустимы. 409 с причиной для неподходящих плат. Ответ `{"jobs"}` |
 | POST | `/devices/refresh` | «Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки до следующего подключения, свободные агенты переподключаются; ответ `{"hidden","kept_busy","reconnect"}` |
 | POST | `/devices/{id}/identify` | мигание LED |
 | POST | `/devices/{id}/golden` | `{"is_golden": true}` |
@@ -260,7 +268,7 @@ PASS с неподтверждённой загрузкой показывает
   "serial": "NC-2610-0017", "online": true, "last_seen": "2026-10-10T12:00:03Z",
   "ip": "…", "mac": "…", "mac_source": "…", "agent_version": "…", "test_sd_version": "…",
   "kernel": "…", "ram_bytes": 536870912, "has_led": false, "simulated": false, "is_golden": false,
-  "tile": "ready",  // ready | busy | awaiting_boot | pass | boot_unconfirmed | fail | offline | interrupted | incomplete
+  "tile": "ready",  // ready | busy | awaiting_boot | pass | boot_unconfirmed | fail | net_stand | offline | interrupted | incomplete
   "job": {
     "job_id": "j_…", "batch_id": 3, "mode": "test_flash", "status": "running",
     "started_at": "…", "finished_at": null, "elapsed": 134, "boot_deadline": null,

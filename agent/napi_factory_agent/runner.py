@@ -34,7 +34,7 @@ log = logging.getLogger("napi.agent")
 STAGE_FUNCS: dict[str, Callable[[StageCtx], StageResult]] = {
     "ram": st_ram.run, "net": st_net.run, "sdnand": st_sdnand.run, "flash": st_flash.run,
 }
-STAGE_LABEL = {"ram": "RAM", "net": "NET", "sdnand": "SD", "flash": "FLASH", "boot": "BOOT"}
+STAGE_LABEL = {"ram": "RAM", "net": "NET", "sdnand": "NAND", "flash": "FLASH", "boot": "BOOT"}
 TEST_STAGES = ("ram", "net", "sdnand")
 MODE_STAGES = {
     "test_only": {"ram", "net", "sdnand"},
@@ -332,7 +332,9 @@ class Agent:
                 self._set_stage(name, state="skipped", detail="отменено")
                 continue
             if name == "flash" and mode == "test_flash":
-                bad = [s for s in TEST_STAGES if job["stages"][s]["state"] not in ("pass", "skipped")]
+                # FAIL сети прошивке не мешает (итог всё равно FAIL): сеть часто подводит стенд, а не плата
+                bad = [s for s in TEST_STAGES if job["stages"][s]["state"] not in ("pass", "skipped")
+                       and not (s == "net" and job["stages"][s]["state"] == "fail")]
                 if bad:
                     self._set_stage(name, state="skipped", detail="тесты не пройдены")
                     continue
@@ -387,7 +389,7 @@ class Agent:
                 if name == "flash" and shared.get("flash_write_started"):
                     return StageResult("interrupted", "FLASH: interrupted, SD-NAND непригодна до перепрошивки")
                 if name == "sdnand":
-                    return StageResult("interrupted", "SD: остановлено")
+                    return StageResult("interrupted", "NAND: остановлено")
                 return StageResult("skipped", "отменено")
             except StageTimeout:
                 return StageResult("fail", f"{label}: timeout")

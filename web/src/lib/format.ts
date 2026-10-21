@@ -17,7 +17,7 @@ import { STAGES } from '../api/types'
 export const STAGE_LABEL: Record<StageName, string> = {
   ram: 'RAM',
   net: 'NET',
-  sdnand: 'SD',
+  sdnand: 'NAND',
   flash: 'FLASH',
   boot: 'CHECKB',
 }
@@ -53,6 +53,7 @@ export const TILE_LABEL: Record<Tile, string> = {
   pass: 'PASS',
   boot_unconfirmed: 'PASS, загрузка не подтверждена',
   fail: 'FAIL',
+  net_stand: 'сеть стенда?',
   offline: 'нет связи',
   interrupted: 'прервано',
   incomplete: 'не выполнено',
@@ -87,6 +88,7 @@ export function tileClass(tile: Tile | string | null | undefined): string {
     case 'pass':
     case 'boot_unconfirmed':
     case 'fail':
+    case 'net_stand':
     case 'offline':
     case 'interrupted':
       return 'tile-' + tile
@@ -169,7 +171,9 @@ export function currentStageLine(job: JobView | null, tile: Tile): string {
   for (const name of STAGES) {
     const s = st[name]
     if (s && (s.state === 'fail' || s.state === 'error')) {
-      return s.detail ? s.detail : `${STAGE_LONG[name]}: ${STATE_LABEL[s.state]}`
+      // FAIL сети прошивке не мешает: плата прошита, это видно на плитке
+      const flashed = name === 'net' && st.flash?.state === 'pass' ? ' · прошита' : ''
+      return (s.detail ? s.detail : `${STAGE_LONG[name]}: ${STATE_LABEL[s.state]}`) + flashed
     }
   }
   for (const name of STAGES) {

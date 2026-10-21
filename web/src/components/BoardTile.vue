@@ -35,19 +35,26 @@ const board = computed(() => boardBadge(props.device.board))
 const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
 // PASS, но BOOTCHECK не подтвердил загрузку с SD-NAND: жёлтая плитка, проверить глазами
 const bootUnconfirmed = computed(() => props.device.tile === 'boot_unconfirmed')
+// FAIL только по сети, а сеть не прошли почти все платы партии: скорее сеть стенда, чем плата (серым)
+const netStand = computed(() => props.device.tile === 'net_stand')
 const line = computed(() => {
   if (bootUnconfirmed.value) return 'PASS, загрузка не подтверждена — проверьте'
+  if (netStand.value) return `сеть стенда? ${currentStageLine(shownJob.value, 'fail')}`
   if (passWarn.value) return warns.value[0] ?? 'PASS, есть замечания'
   return currentStageLine(shownJob.value, props.device.tile)
 })
-const lineTitle = computed(() =>
-  passWarn.value || bootUnconfirmed.value ? warns.value.join('\n') || 'есть замечания' : line.value,
-)
+const lineTitle = computed(() => {
+  if (netStand.value) {
+    return `${line.value}\nNET не прошли почти все платы партии — похоже на сеть стенда (коммутатор, кабель или Wi-Fi до сервера), а не на брак платы. Проверьте сеть и повторите проверку.`
+  }
+  return passWarn.value || bootUnconfirmed.value ? warns.value.join('\n') || 'есть замечания' : line.value
+})
 const timer = computed(() => tileTimer(shownJob.value, now.value))
 const eta = computed(() => (props.device.tile === 'awaiting_boot' ? '' : etaText(shownJob.value)))
 // MAC интерфейса связи со стендом (у NAPI-P — USB-адаптера), иначе MAC платы
 const mac = computed(() => props.device.board?.uplink?.mac ?? props.device.mac ?? null)
 const failLine = computed(() => {
+  if (netStand.value) return false
   const st = shownJob.value?.stages ?? {}
   return Object.values(st).some((s) => s && (s.state === 'fail' || s.state === 'error'))
 })
@@ -72,10 +79,10 @@ const title = computed(() => {
     @click="$emit('pick', $event)"
     @dblclick="$emit('open')"
   >
+    <span v-if="selected" class="picked" aria-label="выбрана">✓</span>
     <div class="row head">
       <span class="no">{{ device.display_no }}</span>
       <span v-if="device.tested_before" class="seen" title="Плата уже проверялась, есть в базе">↻</span>
-      <span class="tag">{{ tileTag(device) }}</span>
       <span class="badges">
         <span v-if="board" class="badge board" :class="'b-' + board.tone" :title="board.title">{{ board.text }}</span>
         <span v-if="bootChecked" class="badge bootok" title="BOOTCHECK пройден: загрузка с SD-NAND проверена">✓</span>
@@ -83,7 +90,11 @@ const title = computed(() => {
         <span v-if="device.simulated" class="badge sim" title="Симулированный агент">SIM</span>
         <span v-if="device.tile === 'interrupted'" class="badge bang" title="Прервано">!</span>
         <span v-if="device.tile === 'incomplete'" class="badge bang" title="Не выполнено: тест запрещён, это не дефект платы">—</span>
+        <span v-if="netStand" class="badge bang" title="Сеть стенда? NET не прошли почти все платы партии">?</span>
       </span>
+    </div>
+    <div class="row sn" :title="device.serial ? `Серийник ${device.serial}` : `ID чипа ${device.cpuid ?? '—'} (серийник = ID чипа)`">
+      {{ device.serial ?? device.cpuid ?? tileTag(device) }}
     </div>
     <div v-if="device.ip || mac" class="row net" :title="`IP ${device.ip ?? '—'} · MAC ${mac ?? '—'}`">
       <span class="ip">{{ device.ip ?? '—' }}</span>
@@ -92,7 +103,7 @@ const title = computed(() => {
     </div>
     <StageBar :job="shownJob" labels />
     <div v-if="prev" class="prev" :class="'prev-' + prev.status" :title="prevLine">{{ prevLine }}</div>
-    <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn || bootUnconfirmed }" :title="lineTitle">
+    <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn || bootUnconfirmed, standtxt: netStand }" :title="lineTitle">
       <span v-if="passWarn || bootUnconfirmed" class="warn-ico">⚠</span>{{ line }}
     </div>
     <div class="row foot">
@@ -122,9 +133,31 @@ const title = computed(() => {
 .tile:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
+.tile {
+  position: relative;
+}
+/* Выбранная плата: толстая синяя обводка снаружи рамки (рамка остаётся цветом итога) и синий кружок с ✓ */
 .tile.selected {
-  box-shadow: 0 0 0 3px var(--select);
-  background: #eef4ff;
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 7px var(--select-strong);
+  background: #e6efff;
+}
+.picked {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--select-strong);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 26px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #fff;
+  z-index: 1;
 }
 .tile-ready {
   border-color: var(--blue);
@@ -156,6 +189,16 @@ const title = computed(() => {
   background: #ffe08a;
   color: #6b4500;
   border: 1px solid #e3b23c;
+}
+.sn {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
 }
 .net {
   font-family: var(--mono);
@@ -201,8 +244,15 @@ const title = computed(() => {
   opacity: 0.85;
 }
 .tile-interrupted,
-.tile-incomplete {
+.tile-incomplete,
+.tile-net_stand {
   border-color: #8a8f98;
+}
+.tile-net_stand {
+  background: #f1f2f4;
+}
+.standtxt {
+  color: #4b5563;
 }
 .row {
   display: flex;
@@ -213,11 +263,6 @@ const title = computed(() => {
 .head .no {
   font-weight: 700;
   font-size: 16px;
-}
-.head .tag {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--muted);
 }
 .badges {
   margin-left: auto;

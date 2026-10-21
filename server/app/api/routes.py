@@ -209,6 +209,15 @@ async def refresh_grid(request: Request, op: dict = Depends(operator)):
     return await core(request).factory.refresh_grid(op)
 
 
+@router.post("/devices/bootcheck")
+async def retry_boot(body: StopIn, request: Request, op: dict = Depends(operator)):
+    """«Только BOOTCHECK»: заново ждать загрузку с SD-NAND у прошитых плат, где она не подтвердилась."""
+    try:
+        return await core(request).factory.retry_boot(op, body.device_ids)
+    except FactoryError as exc:
+        return handle(exc)
+
+
 @router.post("/devices/{device_id}/identify")
 async def identify(device_id: int, request: Request, op: dict = Depends(operator)):
     try:

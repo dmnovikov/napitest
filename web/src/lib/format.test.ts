@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  STAGE_LABEL,
   currentStageLine,
   previousText,
   shownStages,
@@ -216,5 +217,20 @@ describe('etaText', () => {
     expect(etaText(j('running', 40))).toBe('осталось <1 мин')
     expect(etaText(j('running', 300, true))).toBe('осталось ≥5 мин')
     expect(etaText(j('pass', 300))).toBe('')
+  })
+})
+
+describe('remarks 2026-10-21', () => {
+  it('SD-NAND stage is labelled NAND, not SD (confused with the test microSD)', () => {
+    expect(STAGE_LABEL.sdnand).toBe('NAND')
+  })
+  it('NET fail on a flashed board says it is flashed', () => {
+    const j = job({ status: 'fail', stages: { net: { state: 'fail', detail: 'NET: UDP tx 48 Mbit/s<81' }, flash: { state: 'pass' } } })
+    expect(currentStageLine(j, 'fail')).toBe('NET: UDP tx 48 Mbit/s<81 · прошита')
+    const k = job({ status: 'fail', stages: { net: { state: 'fail', detail: 'NET: x' }, flash: { state: 'skipped' } } })
+    expect(currentStageLine(k, 'fail')).toBe('NET: x')
+  })
+  it('stand network tile is grey, not red', () => {
+    expect(tileClass('net_stand')).toBe('tile-net_stand')
   })
 })

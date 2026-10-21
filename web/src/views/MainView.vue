@@ -30,7 +30,10 @@ const lastPicked = ref<number | null>(null)
 const fullPattern = ref(false)
 const fullMemtester = ref(false)
 const fullNet = ref(false)
+const skipNet = ref(false)
 const skipBoot = ref(false)
+// Тип плат для всей партии: '' — как определено (или задано) у каждой платы
+const batchBoard = ref<'' | BoardType>('')
 
 // Меню «ОС для внутреннего накопителя»: по умолчанию первый пункт (Armbian); список ведёт сервер (страница «Образы»)
 const osMenu = computed(() => live.summary?.images?.menu ?? [])
@@ -124,6 +127,9 @@ interface Pending {
   okText: string
   danger: boolean
   run: () => Promise<void>
+  cancelText?: string
+  /** Третья кнопка диалога */
+  alt?: { text: string; run: () => void }
 }
 const pending = ref<Pending | null>(null)
 
@@ -153,13 +159,10 @@ function pick(d: DeviceView, ev: MouseEvent) {
       const [lo, hi] = a < b ? [a, b] : [b, a]
       for (const id of ids.slice(lo, hi + 1)) s.add(id)
     }
-  } else if (ev.ctrlKey || ev.metaKey) {
-    if (s.has(d.device_id)) s.delete(d.device_id)
-    else s.add(d.device_id)
-  } else if (s.size === 1 && s.has(d.device_id)) {
-    s.clear()
+  } else if (s.has(d.device_id)) {
+    // Щелчок добавляет плату к выбору или снимает её (на сенсорном экране нет Ctrl)
+    s.delete(d.device_id)
   } else {
-    s.clear()
     s.add(d.device_id)
   }
   lastPicked.value = d.device_id
@@ -183,6 +186,10 @@ async function setBoardSelected(ev: Event) {
 }
 
 function boardsLine(ids: number[]): string {
+  if (batchBoard.value) {
+    return `Тип плат для партии: ${BOARD_NAME[batchBoard.value]} (запомнится у плат).` +
+      (batchBoard.value === 'napi-p' ? ' Сеть не проверяется.\n' : '\n')
+  }
   const p = devices.value.filter((d) => ids.includes(d.device_id) && d.board?.type === 'napi-p').length
   if (!p) return ''
   return p === ids.length ? 'Все платы NAPI-P: сеть не проверяется.\n' : `Из них NAPI-P: ${p} — у них сеть не проверяется.\n`
@@ -219,14 +226,43 @@ async function confirmOk() {
   pending.value = null
   if (p) await guarded(p.run)
 }
+function confirmAlt() {
+  const p = pending.value
+  pending.value = null
+  p?.alt?.run()
+}
 
-function needSelection(): number[] | null {
+/** Выбранные платы. Ничего не выбрано — окно: выбрать нужные или сразу все из pool (затем retry). */
+function needSelection(
+  retry: () => void,
+  pool: DeviceView[] = devices.value.filter((d) => d.online),
+  what = 'Все платы на связи',
+): number[] | null {
   const ids = [...selected.value]
-  if (!ids.length) {
-    say('Выберите платы (клик, Ctrl/Shift+клик или «Выбрать все online»)', true)
+  if (ids.length) return ids
+  if (!pool.length) {
+    say('Не выбрано ни одной платы: щёлкните по нужным плиткам', false, true)
     return null
   }
-  return ids
+  ask({
+    title: 'Не выбрано ни одной платы',
+    message: 'Выберите нужные платы щелчком по плитке или запустите сразу на всех.',
+    okText: `${what} (${pool.length})`,
+    cancelText: 'Выбрать нужные',
+    danger: false,
+    run: async () => {
+      selected.value = new Set(pool.map((d) => d.device_id))
+      queueMicrotask(retry)
+    },
+  })
+  return null
+}
+
+/** Свободные платы на связи, которые не выбраны: вернувшаяся после выбора плата не должна молча остаться без проверки. */
+function unselectedIdle(): DeviceView[] {
+  return devices.value.filter(
+    (d) => d.online && !selected.value.has(d.device_id) && d.tile !== 'busy' && d.tile !== 'awaiting_boot',
+  )
 }
 
 async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golden' = 'production') {
@@ -240,11 +276,14 @@ async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golde
       memtester: (fullMemtester.value ? 'full' : 'quick') as 'quick' | 'full',
       net: (fullNet.value ? 'full' : 'quick') as 'quick' | 'full',
       boot: (skipBoot.value ? 'skip' : 'check') as 'check' | 'skip',
+      ...(skipNet.value ? { net_skip: true } : {}),
+      ...(batchBoard.value ? { board: batchBoard.value } : {}),
       ...(mode === 'test_only' ? {} : { os: osKey.value, zero: (zeroFull.value ? 'full' : 'quick') as 'quick' | 'full' }),
     },
   }
+  let warnings: string[] = []
   try {
-    await api.startBatch(body)
+    warnings = (await api.startBatch(body))?.warnings ?? []
   } catch (e) {
     const items = kind === 'production' ? retestList(e) : null
     if (!items) throw e
@@ -255,14 +294,37 @@ async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golde
       say(`Не запущено: ${MODE_LABEL[mode]} — платы уже проверялись`, true)
       return
     }
-    await api.startBatch({ ...body, options: { ...body.options, allow_retest: true } })
+    warnings = (await api.startBatch({ ...body, options: { ...body.options, allow_retest: true } }))?.warnings ?? []
   }
-  say(`Запущено: ${MODE_LABEL[mode]}, плат: ${ids.length}`)
+  const text = `Запущено: ${MODE_LABEL[mode]}, плат: ${ids.length}`
+  if (warnings.length) say(`${text}\n${warnings.join('\n')}`, false, true)
+  else say(text)
 }
 
-function launch(mode: Mode) {
-  const ids = needSelection()
+function launch(mode: Mode, restChecked = false) {
+  const ids = needSelection(() => launch(mode))
   if (!ids) return
+  const rest = restChecked ? [] : unselectedIdle()
+  if (rest.length) {
+    ask({
+      title: MODE_LABEL[mode],
+      message:
+        `Выбрано ${ids.length} из ${ids.length + rest.length} свободных плат на связи.\n` +
+        `Не выбраны: ${rest.map((d) => d.display_no).join(', ')}.`,
+      okText: 'Запустить без них',
+      danger: false,
+      cancelText: 'Отмена',
+      run: async () => queueMicrotask(() => launch(mode, true)),
+      alt: {
+        text: `Добавить их (${rest.length})`,
+        run: () => {
+          selected.value = new Set([...selected.value, ...rest.map((d) => d.device_id)])
+          launch(mode, true)
+        },
+      },
+    })
+    return
+  }
   if (mode === 'test_only') {
     if (!missing.value) return void guarded(() => startBatch(mode, ids))
     ask({
@@ -329,36 +391,14 @@ function stop() {
   })
 }
 
-function repeat() {
-  const sel = selectedDevices.value
-  if (!sel.length) return void needSelection()
-  const groups = new Map<Mode, number[]>()
-  const skipped: number[] = []
-  for (const d of sel) {
-    const m = d.job?.mode
-    if (!m) {
-      skipped.push(d.display_no)
-      continue
-    }
-    groups.set(m, [...(groups.get(m) ?? []), d.device_id])
-  }
-  if (!groups.size) {
-    say('У выбранных плат нет предыдущих заданий', true)
-    return
-  }
-  const destructive = [...groups.keys()].some((m) => m !== 'test_only')
-  const desc = [...groups.entries()].map(([m, ids]) => `${MODE_LABEL[m]}: ${ids.length}`).join('\n')
-  const run = async () => {
-    for (const [m, ids] of groups) await startBatch(m, ids)
-    if (skipped.length) say(`Пропущены платы без заданий: ${skipped.join(', ')}`, true)
-  }
-  if (!destructive) return void guarded(run)
-  ask({
-    title: 'Повторить для выбранных',
-    message: `${desc}\nВключены режимы с перезаписью SD-NAND. Продолжить?`,
-    okText: 'Повторить',
-    danger: true,
-    run,
+// «Только BOOTCHECK»: заново ждать загрузку с SD-NAND у прошитых плат, где она не подтвердилась
+function bootcheck() {
+  const pool = devices.value.filter((d) => d.tile === 'boot_unconfirmed')
+  const ids = needSelection(bootcheck, pool, 'Все с неподтверждённой загрузкой')
+  if (!ids) return
+  void guarded(async () => {
+    const r = await api.retryBoot(ids)
+    say(`BOOTCHECK заново, плат: ${r.jobs}. Выключите плату, выньте microSD и включите (ожидание до 10 мин)`)
   })
 }
 
@@ -434,13 +474,20 @@ function exportCsv() {
         <button class="danger" :disabled="busy" @click="stop">Остановить</button>
       </div>
       <div class="group">
-        <button :disabled="busy || !selected.size" @click="repeat">Повторить для выбранных</button>
+        <button
+          :disabled="busy"
+          title="Заново ждать загрузку с SD-NAND у прошитых плат, где она не подтвердилась (не успели вынуть microSD)"
+          @click="bootcheck"
+        >
+          Только BOOTCHECK
+        </button>
         <button v-if="anyLed" :disabled="busy" @click="identify">Идентифицировать</button>
         <button :disabled="busy" @click="benchCheck">Проверка стенда</button>
         <button :disabled="batchId === null" @click="exportCsv">Экспорт CSV</button>
       </div>
-      <div class="group">
-        <button @click="selectAllOnline">Выбрать все online</button>
+      <div class="group selrow">
+        <button @click="selectAllOnline">Выбрать все онлайн</button>
+        <button :disabled="!selected.size" @click="clearSelection">Снять выбор</button>
         <button
           :disabled="busy"
           title="Убрать со стенда платы без связи (их итоги остаются в истории) и заново опросить подключённые платы: IP, MAC, тип платы"
@@ -448,8 +495,7 @@ function exportCsv() {
         >
           Скрыть офлайн, обнаружить онлайн платы
         </button>
-        <button :disabled="!selected.size" @click="clearSelection">Снять выбор</button>
-        <span class="selcount">выбрано: {{ selected.size }}</span>
+        <span class="selcount" :class="{ some: selected.size }">выбрано: {{ selected.size }}</span>
         <label v-if="selected.size" class="chk" title="Если стенд определил тип платы неверно. «Авто» — снова по подключению: встроенный Ethernet — NAPI-C, USB-адаптер — NAPI-P.">
           Тип платы:
           <select value="" @change="setBoardSelected">
@@ -459,6 +505,7 @@ function exportCsv() {
             <option value="napi-p">NAPI-P</option>
           </select>
         </label>
+        <span class="hint">щелчок по плате — выбрать или снять · Shift+щелчок — все подряд</span>
       </div>
       <div class="group opts">
         <label class="chk" title="Запись и сверка всей SD-NAND (3,9 ГБ). Без галочки: 3 участка по 64 МБ, ~40 с. В «Тесты + прошивка» SD-NAND проверяется целиком всегда.">
@@ -468,10 +515,21 @@ function exportCsv() {
           <input v-model="fullMemtester" type="checkbox" /> Тотальная проверка памяти (+9 мин)
         </label>
         <label class="chk" title="Дополнительно TCP iperf3 по 10 с в каждую сторону: реальная пропускная способность. Без галочки: UDP 90 Мбит/с по 3 с — потери и ошибки порта.">
-          <input v-model="fullNet" type="checkbox" /> Тотальная проверка сети (+30 с, нагружает сеть)
+          <input v-model="fullNet" type="checkbox" :disabled="skipNet" /> Тотальная проверка сети (+30 с, нагружает сеть)
+        </label>
+        <label class="chk" title="Этап NET пропускается (серым «NET пропущен»): например, пока сеть стенда до сервера временно плохая (Wi-Fi). Пропуск записывается в историю и CSV.">
+          <input v-model="skipNet" type="checkbox" /> Без проверки сети
         </label>
         <label class="chk" title="Без BOOTCHECK плата получает итог сразу после прошивки: не нужно выключать её, вынимать microSD и ждать до 10 мин. Записанный образ всё равно сверяется контрольной суммой.">
           <input v-model="skipBoot" type="checkbox" /> Не проверять загрузку с SD-NAND (BOOTCHECK)
+        </label>
+        <label class="chk" title="Если стенд определил тип неверно (например, NAPI-C подключили через USB-адаптер). Выбор запоминается у плат партии; NAPI-P — сеть не проверяется.">
+          Тип плат в партии:
+          <select v-model="batchBoard">
+            <option value="">как определено</option>
+            <option value="napi-c">все NAPI-C</option>
+            <option value="napi-p">все NAPI-P</option>
+          </select>
         </label>
       </div>
       <div class="group os">
@@ -535,7 +593,10 @@ function exportCsv() {
       :message="pending.message"
       :ok-text="pending.okText"
       :danger="pending.danger"
+      :cancel-text="pending.cancelText"
+      :alt-text="pending.alt?.text"
       @ok="confirmOk"
+      @alt="confirmAlt"
       @cancel="pending = null"
     />
     <PasswordDialog
@@ -580,6 +641,20 @@ function exportCsv() {
   font-size: 13px;
   color: var(--muted);
   margin-left: 4px;
+}
+.selcount.some {
+  color: var(--select-strong);
+  font-weight: 700;
+}
+.selrow {
+  flex-basis: 100%;
+  padding: 6px 8px;
+  background: #f3f6fb;
+  border-radius: 6px;
+}
+.hint {
+  font-size: 12px;
+  color: var(--muted);
 }
 .opts {
   flex-basis: 100%;

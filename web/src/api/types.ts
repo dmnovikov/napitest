@@ -2,7 +2,8 @@ export type StageName = 'ram' | 'net' | 'sdnand' | 'flash' | 'boot'
 export type StageState = 'pending' | 'running' | 'pass' | 'fail' | 'skipped' | 'error' | 'interrupted'
 export type Mode = 'test_only' | 'test_flash' | 'flash_only'
 export type Tile =
-  | 'ready' | 'busy' | 'awaiting_boot' | 'pass' | 'boot_unconfirmed' | 'fail' | 'offline' | 'interrupted' | 'incomplete'
+  | 'ready' | 'busy' | 'awaiting_boot' | 'pass' | 'boot_unconfirmed' | 'fail' | 'net_stand' | 'offline' | 'interrupted'
+  | 'incomplete'
 export type JobStatus =
   | 'queued' | 'running' | 'awaiting_boot' | 'pass' | 'fail' | 'interrupted' | 'cancelled' | 'offline' | 'incomplete'
 
@@ -106,6 +107,8 @@ export interface Summary {
   pass_warn?: number | null
   /** PASS, но загрузка с SD-NAND не подтверждена (жёлтые плитки) */
   boot_unconfirmed?: number | null
+  /** FAIL только по сети, а сеть не прошли почти все платы партии: «сеть стенда?» (серые плитки) */
+  net_stand?: number | null
   /** Сколько плат оператор поставил на стенд (0: не задано). */
   expected?: number | null
   /** Меню «ОС для внутреннего накопителя» и образы. */
@@ -340,6 +343,8 @@ export interface ActiveBatch {
   operator: string | null
   boards: number
   eta_at: string | null
+  /** Когда понадобится оператор: первая плата ждёт BOOTCHECK (вынуть microSD) или конец партии. */
+  operator_at?: string | null
   /** Для части этапов ещё нет истории: окончание не раньше eta_at. */
   eta_partial?: boolean
 }

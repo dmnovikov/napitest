@@ -66,13 +66,22 @@ def test_test_flash_full(agent_factory, images):
 
 
 def test_test_flash_no_flash_on_fail(agent_factory):
-    a = agent_factory(fail_stage="net")
+    a = agent_factory(fail_stage="ram")
     job = run(run_job(a, "test_flash"))
     assert job["result"] == "fail"
-    assert job["stages"]["net"]["state"] == "fail"
+    assert job["stages"]["ram"]["state"] == "fail"
     assert job["stages"]["flash"]["state"] == "skipped"
     assert job["stages"]["flash"]["detail"] == "тесты не пройдены"
     assert not any(m.get("type") == "serial_request" for m in a.link.sent)
+
+
+def test_test_flash_net_fail_still_flashes(agent_factory, images):
+    # FAIL сети не мешает прошивке (сеть часто подводит стенд); итог задания всё равно FAIL
+    a = agent_factory(fail_stage="net")
+    job = run(run_job(a, "test_flash"))
+    assert job["stages"]["net"]["state"] == "fail"
+    assert job["stages"]["flash"]["state"] == "pass"
+    assert job["result"] == "fail"
 
 
 def test_flash_only(agent_factory):
@@ -114,7 +123,7 @@ def test_destructive_disabled_on_real_guard(agent_factory):
     sd = job["stages"]["sdnand"]
     # блокировка предохранителем — не дефект платы: серый «пропущен», итог «не выполнено»
     assert sd["state"] == "skipped" and sd["blocked"] is True
-    assert sd["detail"] == "SD: запись запрещена (profile not validated)"
+    assert sd["detail"] == "NAND: запись запрещена (profile not validated)"
     assert job["stages"]["flash"]["state"] == "skipped"
     assert job["result"] == "incomplete"
     # «Только тесты» без SD-теста не должен стать PASS

@@ -3,14 +3,21 @@
 Агент (и отчёт первой загрузки) шлёт на 255.255.255.255:<port> запрос
 {"type": "napi_discover", "v": 1}; сервер отвечает адресом, по которому он виден
 с подсети запрашивающего. Токен в обмене не участвует.
+
+Плата в сети, подключённой к серверу напрямую, получает адрес сервера в этой сети, даже если
+задан NAPI_PUBLIC_URL: у сервера бывает несколько сетей (на проде 192.168.16.x и 192.168.55.x),
+и через чужой адрес плата пошла бы через роутер (NAT, BOOTCHECK её не увидит). NAPI_PUBLIC_URL —
+для запросов из сетей, которые сервер напрямую не видит (сервер за NAT или прокси).
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import ipaddress
 import socket
 
+from .scheduler.bootnet import parse_routes
 from .version import __version__
 
 log = logging.getLogger("napi.discovery")
@@ -26,10 +33,21 @@ def local_ip_for(peer: str) -> str | None:
         return None
 
 
+def direct_peer(peer: str, route_path: str = "/proc/net/route") -> bool:
+    """peer в сети, подключённой к серверу напрямую (без шлюза)."""
+    try:
+        addr = ipaddress.IPv4Address(peer)
+        with open(route_path) as f:
+            return any(addr in n for n in parse_routes(f.read()))
+    except (ValueError, OSError):
+        return False
+
+
 class _Protocol(asyncio.DatagramProtocol):
-    def __init__(self, port: int, public_url: str):
+    def __init__(self, port: int, public_url: str, route_path: str = "/proc/net/route"):
         self.port = port
         self.public_url = public_url.rstrip("/")
+        self.route_path = route_path
         self.transport: asyncio.DatagramTransport | None = None
 
     def connection_made(self, transport):
@@ -42,12 +60,13 @@ class _Protocol(asyncio.DatagramProtocol):
             return None
         if not isinstance(msg, dict) or msg.get("type") != "napi_discover":
             return None
-        http = self.public_url
-        if not http:
-            ip = local_ip_for(peer)
-            if not ip:
-                return None
+        ip = local_ip_for(peer)
+        if ip and (not self.public_url or direct_peer(peer, self.route_path)):
             http = f"http://{ip}:{self.port}"
+        elif self.public_url:
+            http = self.public_url
+        else:
+            return None
         ws = "ws" + http[4:] if http.startswith("http") else http
         return {"type": "napi_server", "v": 1, "http": http, "ws": ws + "/ws/agent", "version": __version__}
 
