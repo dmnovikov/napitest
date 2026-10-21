@@ -128,3 +128,36 @@ def test_napi_p_gets_test_pass_without_net(client):
     assert "serial" in a.recv("serial")
     assert client.app.state.core.db.one("SELECT tested_pass FROM device WHERE id = ?", (did,))["tested_pass"] == 1
     a.close()
+
+
+def test_flash_only_after_net_only_fail(client):
+    # «Только прошивка» после тестов, где не прошла только сеть: прошивать можно (серийник выдаётся)
+    a = Agent(client)
+    did = a.ack["device_id"]
+    start(client, "test_only", [did])
+    jid = a.recv("job")["job_id"]
+    a.pass_stage(jid, "ram")
+    fail_net(a, jid)
+    a.pass_stage(jid, "sdnand")
+    a.event(jid, "job_finished", data={"result": "fail"})
+    wait_for(lambda: device(client, "CPU0001")["tile"] == "fail")
+    start(client, "flash_only", [did], options={"allow_retest": True})
+    jid2 = a.recv("job")["job_id"]
+    a.ws.send_json({"type": "serial_request", "job_id": jid2})
+    assert "serial" in a.recv("serial")
+    a.close()
+
+
+def test_flash_only_refused_after_ram_fail(client):
+    a = Agent(client)
+    did = a.ack["device_id"]
+    start(client, "test_only", [did])
+    jid = a.recv("job")["job_id"]
+    a.event(jid, "stage_finished", "ram", {"state": "fail", "detail": "RAM: 2 err"})
+    a.event(jid, "job_finished", data={"result": "fail"})
+    wait_for(lambda: device(client, "CPU0001")["tile"] == "fail")
+    start(client, "flash_only", [did], options={"allow_retest": True})
+    jid2 = a.recv("job")["job_id"]
+    a.ws.send_json({"type": "serial_request", "job_id": jid2})
+    assert a.recv("serial")["error"] == "device has no TEST_PASS"
+    a.close()

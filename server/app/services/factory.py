@@ -939,6 +939,12 @@ class Factory:
                 return False
         return True
 
+    def _tested_except_net(self, device_id: int) -> bool:
+        """«Только прошивка» после тестов, где не прошла только сеть: FAIL сети прошивке не мешает."""
+        job = self.db.one("SELECT * FROM job WHERE device_id = ? AND mode IN ('test_only','test_flash')"
+                          " AND status IN ('pass','fail') ORDER BY created_at DESC, rowid DESC LIMIT 1", (device_id,))
+        return job is not None and self._tests_ok_for_flash(job)
+
     async def _agent_finished(self, job, data: dict) -> None:
         result = data.get("result")
         params = loads(job["params_json"], {})
@@ -1041,7 +1047,7 @@ class Factory:
                 return reply
         elif job["mode"] == "flash_only":
             requires = bool(self.profile.section("flash").get("flash_only_requires_tested", True))
-            if not dev["serial"] and not dev["tested_pass"] and requires:
+            if not dev["serial"] and not dev["tested_pass"] and requires and not self._tested_except_net(device_id):
                 reply["error"] = "device has no TEST_PASS"
                 return reply
         else:
