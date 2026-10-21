@@ -67,7 +67,7 @@ function sdv(v: unknown) {
         <tr><th>Время</th><td>{{ formatDateTime(data.batch.started_at) }} — {{ formatDateTime(data.batch.finished_at) }}</td></tr>
         <tr><th>Версии</th><td>microSD <span class="mono">{{ sdv(data.batch.test_sd_versions) }}</span>, образ <span class="mono">{{ data.batch.image_version ?? '—' }}</span></td></tr>
         <tr v-if="data.batch.os"><th>ОС для внутреннего накопителя</th><td>{{ data.batch.os }}</td></tr>
-        <tr><th>Итог</th><td>плат {{ data.batch.total }}, <span class="pass">PASS {{ data.batch.pass }}</span>, <span class="fail">FAIL {{ data.batch.fail }}</span>, golden: {{ data.batch.golden ?? '—' }}</td></tr>
+        <tr><th>Итог</th><td>плат {{ data.batch.total }}, <span class="pass">PASS {{ data.batch.pass }}</span>, <span class="res-warn">WARN {{ data.batch.warn ?? 0 }}</span>, <span class="fail">FAIL {{ data.batch.fail }}</span>, golden: {{ data.batch.golden ?? '—' }}</td></tr>
         <tr><th>Экспорт</th><td><a :href="links.batchCsv(data.batch.batch_id)">CSV</a> · <a :href="links.batchJson(data.batch.batch_id)">JSON</a></td></tr>
       </table>
       <table class="tbl">
@@ -80,12 +80,12 @@ function sdv(v: unknown) {
             <td class="mono">{{ j.cpuid ?? '—' }}</td>
             <td>{{ j.board_type ? BOARD_NAME[j.board_type] : '—' }}</td>
             <td style="width: 150px"><StageBar :job="asView(j)" /></td>
-            <td :class="isPass(j) ? 'pass' : j.status === 'fail' ? 'fail' : ''">{{ JOB_STATUS_LABEL[j.status] ?? j.status }}</td>
+            <td :class="isPass(j) ? 'pass' : j.status === 'warn' ? 'res-warn' : j.status === 'fail' ? 'fail' : ''">{{ JOB_STATUS_LABEL[j.status] ?? j.status }}</td>
             <td>
               {{ failDetails(j) }}
               <span v-if="warnText(j)" class="warn" :title="warnText(j)">⚠</span>
             </td>
-            <td><a v-if="isPass(j) && j.serial" :href="links.label(j.device_id)" target="_blank">Этикетка</a></td>
+            <td><a v-if="(isPass(j) || j.status === 'warn') && j.serial" :href="links.label(j.device_id)" target="_blank">Этикетка</a></td>
           </tr>
         </tbody>
       </table>

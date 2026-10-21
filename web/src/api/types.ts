@@ -2,10 +2,10 @@ export type StageName = 'ram' | 'net' | 'sdnand' | 'flash' | 'boot'
 export type StageState = 'pending' | 'running' | 'pass' | 'fail' | 'skipped' | 'error' | 'interrupted'
 export type Mode = 'test_only' | 'test_flash' | 'flash_only'
 export type Tile =
-  | 'ready' | 'busy' | 'awaiting_boot' | 'pass' | 'boot_unconfirmed' | 'fail' | 'net_stand' | 'offline' | 'interrupted'
+  | 'ready' | 'busy' | 'awaiting_boot' | 'pass' | 'boot_unconfirmed' | 'warn' | 'fail' | 'offline' | 'interrupted'
   | 'incomplete'
 export type JobStatus =
-  | 'queued' | 'running' | 'awaiting_boot' | 'pass' | 'fail' | 'interrupted' | 'cancelled' | 'offline' | 'incomplete'
+  | 'queued' | 'running' | 'awaiting_boot' | 'pass' | 'warn' | 'fail' | 'interrupted' | 'cancelled' | 'offline' | 'incomplete'
 
 export const STAGES: StageName[] = ['ram', 'net', 'sdnand', 'flash', 'boot']
 
@@ -107,7 +107,9 @@ export interface Summary {
   pass_warn?: number | null
   /** PASS, но загрузка с SD-NAND не подтверждена (жёлтые плитки) */
   boot_unconfirmed?: number | null
-  /** FAIL только по сети, а сеть не прошли почти все платы партии: «сеть стенда?» (серые плитки) */
+  /** WARN: не прошла только сеть (рыжие плитки) */
+  warn?: number | null
+  /** Из WARN — в партиях, где сеть не прошли почти все платы: подсказка «проверьте сеть стенда» */
   net_stand?: number | null
   /** Сколько плат оператор поставил на стенд (0: не задано). */
   expected?: number | null
@@ -282,6 +284,7 @@ export interface BatchRow {
   os?: string | null
   test_sd_versions: string[] | string | null
   pass: number
+  warn?: number
   fail: number
   total: number
   golden: string | null

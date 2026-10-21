@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  JOB_STATUS_LABEL,
   STAGE_LABEL,
+  TILE_LABEL,
   currentStageLine,
   previousText,
   shownStages,
@@ -230,7 +232,9 @@ describe('remarks 2026-10-21', () => {
     const k = job({ status: 'fail', stages: { net: { state: 'fail', detail: 'NET: x' }, flash: { state: 'skipped' } } })
     expect(currentStageLine(k, 'fail')).toBe('NET: x')
   })
-  it('stand network tile is grey, not red', () => {
-    expect(tileClass('net_stand')).toBe('tile-net_stand')
+  it('NET-only failure is an orange WARN tile, not red', () => {
+    expect(tileClass('warn')).toBe('tile-warn')
+    expect(TILE_LABEL.warn).toContain('WARN')
+    expect(JOB_STATUS_LABEL.warn).toBe('WARN')
   })
 })

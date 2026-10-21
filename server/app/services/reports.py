@@ -93,6 +93,7 @@ class Reports:
                 "SELECT DISTINCT os_name FROM job WHERE batch_id = ? AND os_name IS NOT NULL", (b["id"],))), None),
             "total": len(jobs),
             "pass": sum(1 for j in jobs if j["status"] == "pass"),
+            "warn": sum(1 for j in jobs if j["status"] == "warn"),
             "fail": sum(1 for j in jobs if j["status"] in ("fail", "interrupted", "offline")),
             "golden": b["golden_result"],
         }
@@ -169,9 +170,9 @@ class Reports:
             raise FactoryError("неизвестная плата", 404)
         job = self.db.one(
             "SELECT j.*, b.name AS batch_name FROM job j JOIN batch b ON b.id = j.batch_id"
-            " WHERE j.device_id = ? AND j.status = 'pass' ORDER BY j.finished_at DESC LIMIT 1", (device_id,))
+            " WHERE j.device_id = ? AND j.status IN ('pass', 'warn') ORDER BY j.finished_at DESC LIMIT 1", (device_id,))
         if not dev["serial"] or job is None:
-            raise FactoryError("этикетка печатается только для платы с PASS и серийником", 409)
+            raise FactoryError("этикетка печатается только для платы с PASS или WARN и серийником", 409)
         date = (job["finished_at"] or "")[:10]
         payload = f"SN:{dev['serial']};B:{job['batch_name']};D:{date}"
         qr = segno.make(payload, error="m").svg_inline(scale=3, border=1)

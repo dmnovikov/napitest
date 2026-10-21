@@ -35,17 +35,17 @@ const board = computed(() => boardBadge(props.device.board))
 const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
 // PASS, но BOOTCHECK не подтвердил загрузку с SD-NAND: жёлтая плитка, проверить глазами
 const bootUnconfirmed = computed(() => props.device.tile === 'boot_unconfirmed')
-// FAIL только по сети, а сеть не прошли почти все платы партии: скорее сеть стенда, чем плата (серым)
-const netStand = computed(() => props.device.tile === 'net_stand')
+// WARN: не прошла только сеть — чаще это сеть стенда, а не брак платы (рыжим, не красным)
+const netWarn = computed(() => props.device.tile === 'warn')
 const line = computed(() => {
   if (bootUnconfirmed.value) return 'PASS, загрузка не подтверждена — проверьте'
-  if (netStand.value) return `сеть стенда? ${currentStageLine(shownJob.value, 'fail')}`
+  if (netWarn.value) return `WARN ${currentStageLine(shownJob.value, 'warn')}`
   if (passWarn.value) return warns.value[0] ?? 'PASS, есть замечания'
   return currentStageLine(shownJob.value, props.device.tile)
 })
 const lineTitle = computed(() => {
-  if (netStand.value) {
-    return `${line.value}\nNET не прошли почти все платы партии — похоже на сеть стенда (коммутатор, кабель или Wi-Fi до сервера), а не на брак платы. Проверьте сеть и повторите проверку.`
+  if (netWarn.value) {
+    return `${line.value}\nНе прошла только сеть, остальное пройдено. Чаще это сеть стенда (кабель, коммутатор, Wi-Fi до сервера), а не брак платы: проверьте кабель и повторите «Только тесты».`
   }
   return passWarn.value || bootUnconfirmed.value ? warns.value.join('\n') || 'есть замечания' : line.value
 })
@@ -54,7 +54,7 @@ const eta = computed(() => (props.device.tile === 'awaiting_boot' ? '' : etaText
 // MAC интерфейса связи со стендом (у NAPI-P — USB-адаптера), иначе MAC платы
 const mac = computed(() => props.device.board?.uplink?.mac ?? props.device.mac ?? null)
 const failLine = computed(() => {
-  if (netStand.value) return false
+  if (netWarn.value) return false
   const st = shownJob.value?.stages ?? {}
   return Object.values(st).some((s) => s && (s.state === 'fail' || s.state === 'error'))
 })
@@ -90,7 +90,6 @@ const title = computed(() => {
         <span v-if="device.simulated" class="badge sim" title="Симулированный агент">SIM</span>
         <span v-if="device.tile === 'interrupted'" class="badge bang" title="Прервано">!</span>
         <span v-if="device.tile === 'incomplete'" class="badge bang" title="Не выполнено: тест запрещён, это не дефект платы">—</span>
-        <span v-if="netStand" class="badge bang" title="Сеть стенда? NET не прошли почти все платы партии">?</span>
       </span>
     </div>
     <div class="row sn" :title="device.serial ? `Серийник ${device.serial}` : `ID чипа ${device.cpuid ?? '—'} (серийник = ID чипа)`">
@@ -103,8 +102,8 @@ const title = computed(() => {
     </div>
     <StageBar :job="shownJob" labels />
     <div v-if="prev" class="prev" :class="'prev-' + prev.status" :title="prevLine">{{ prevLine }}</div>
-    <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn || bootUnconfirmed, standtxt: netStand }" :title="lineTitle">
-      <span v-if="passWarn || bootUnconfirmed" class="warn-ico">⚠</span>{{ line }}
+    <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn || bootUnconfirmed || netWarn }" :title="lineTitle">
+      <span v-if="passWarn || bootUnconfirmed || netWarn" class="warn-ico">⚠</span>{{ line }}
     </div>
     <div class="row foot">
       <span :class="{ countdown: timer.countdown }">{{ timer.text }}</span>
@@ -244,15 +243,12 @@ const title = computed(() => {
   opacity: 0.85;
 }
 .tile-interrupted,
-.tile-incomplete,
-.tile-net_stand {
+.tile-incomplete {
   border-color: #8a8f98;
 }
-.tile-net_stand {
-  background: #f1f2f4;
-}
-.standtxt {
-  color: #4b5563;
+.tile-warn {
+  border-color: var(--orange);
+  background: #fff1e4;
 }
 .row {
   display: flex;

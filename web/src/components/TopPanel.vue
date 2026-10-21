@@ -27,8 +27,8 @@ const coffee = computed(() => {
   const ids = new Set(act.map((a) => a.batch_id))
   const mine = props.devices.filter((d) => d.job?.batch_id != null && ids.has(d.job.batch_id))
   if (mine.some((d) => d.tile === 'awaiting_boot' && d.online)) return { text: 'нужен оператор: выньте microSD', need: true }
-  if (mine.some((d) => ['fail', 'net_stand', 'offline', 'interrupted'].includes(d.tile))) {
-    return { text: 'нужен оператор: есть FAIL или плата без связи', need: true }
+  if (mine.some((d) => ['fail', 'warn', 'offline', 'interrupted'].includes(d.tile))) {
+    return { text: 'нужен оператор: есть FAIL, WARN или плата без связи', need: true }
   }
   if (act.some((a) => a.eta_partial)) return { text: '☕ после первых проверок', need: false }
   const at = Math.min(...act.map((a) => Date.parse(a.operator_at ?? a.eta_at ?? '')).filter((t) => !Number.isNaN(t)))
@@ -54,8 +54,8 @@ const counters = computed(() => {
     ...(s?.boot_unconfirmed
       ? [{ k: 'BOOT ?', v: s.boot_unconfirmed, c: 'c-orange', sub: 'загрузка не подтверждена' }]
       : []),
+    ...(s?.warn ? [{ k: 'WARN', v: s.warn, c: 'c-orange', sub: 'не прошла только сеть' }] : []),
     { k: 'FAIL', v: s?.fail, c: 'c-red', sub: '' },
-    ...(s?.net_stand ? [{ k: 'Сеть стенда?', v: s.net_stand, c: 'c-gray', sub: 'FAIL только NET' }] : []),
     { k: 'Offline', v: s?.offline, c: 'c-gray', sub: '' },
     { k: 'Прервано', v: s?.interrupted, c: 'c-gray', sub: '' },
     { k: 'Не выполнено', v: s?.incomplete ?? 0, c: 'c-gray', sub: '' },

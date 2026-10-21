@@ -52,8 +52,8 @@ export const TILE_LABEL: Record<Tile, string> = {
   awaiting_boot: 'ожидание загрузки',
   pass: 'PASS',
   boot_unconfirmed: 'PASS, загрузка не подтверждена',
+  warn: 'WARN: не прошла только сеть',
   fail: 'FAIL',
-  net_stand: 'сеть стенда?',
   offline: 'нет связи',
   interrupted: 'прервано',
   incomplete: 'не выполнено',
@@ -64,6 +64,7 @@ export const JOB_STATUS_LABEL: Record<string, string> = {
   running: 'выполняется',
   awaiting_boot: 'ожидание загрузки',
   pass: 'PASS',
+  warn: 'WARN',
   fail: 'FAIL',
   interrupted: 'прервано',
   cancelled: 'отменено',
@@ -87,8 +88,8 @@ export function tileClass(tile: Tile | string | null | undefined): string {
     case 'awaiting_boot':
     case 'pass':
     case 'boot_unconfirmed':
+    case 'warn':
     case 'fail':
-    case 'net_stand':
     case 'offline':
     case 'interrupted':
       return 'tile-' + tile

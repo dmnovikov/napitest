@@ -99,6 +99,10 @@ button.link {
   color: var(--red);
   font-weight: 600;
 }
+.res-warn {
+  color: var(--orange);
+  font-weight: 600;
+}
 .crumbs {
   margin-bottom: 6px;
 }

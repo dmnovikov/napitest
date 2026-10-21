@@ -203,10 +203,13 @@ Zeroimage: `"flash": {"method": "zero", "zero_full": false, "zero_mib": 64, "os"
 PASS с неподтверждённой загрузкой показывается плиткой `boot_unconfirmed` (оранжевая, не брак) и считается в
 `summary.boot_unconfirmed`, а не в `pass`.
 
-«Тесты + прошивка»: FAIL только сети прошивку не останавливает — плата прошивается и проходит BOOTCHECK, итог
-задания FAIL с `detail` «<причина NET> · прошита». FAIL RAM или SD-NAND прошивку останавливает; `flash_only` после тестов, где не прошла только сеть, разрешён. Если сеть не прошли
-не меньше 3 плат и больше половины плат партии, у которых она проверялась, такие плитки — `net_stand` (серые
-«сеть стенда?», `summary.net_stand`), а не `fail`: скорее виновата сеть стенда.
+Не прошла только сеть (остальные включённые этапы пройдены, BOOTCHECK пройден или не подтверждён) — итог задания
+`warn`, а не `fail`: плитка `warn` (рыжая), `summary.warn`, в истории партий `warn`; этикетка печатается. Светодиод
+платы при этом не мигает «брак». «Тесты + прошивка»: FAIL сети прошивку не останавливает — плата прошивается и
+проходит BOOTCHECK, `detail` «<причина NET> · прошита». FAIL RAM или SD-NAND прошивку останавливает и даёт `fail`;
+`flash_only` после тестов, где не прошла только сеть, разрешён. `summary.net_stand` — сколько плиток `warn` в партиях,
+где сеть не прошли не меньше 3 плат и больше половины плат с проверкой сети: подсказка «проверьте сеть стенда».
+Записи `fail`, сделанные до этого правила, при старте сервера пересчитываются в `warn`.
 Сбои стенда (нет очереди iperf3, сервер не ответил/отказал при FLASH) дают итог `incomplete`, а не `fail`.
 Серийник при `serial.source: cpuid` равен ID чипа (в ОС: `/proc/device-tree/serial-number`) и в плату не пишется.
 
@@ -268,7 +271,7 @@ PASS с неподтверждённой загрузкой показывает
   "serial": "NC-2610-0017", "online": true, "last_seen": "2026-10-10T12:00:03Z",
   "ip": "…", "mac": "…", "mac_source": "…", "agent_version": "…", "test_sd_version": "…",
   "kernel": "…", "ram_bytes": 536870912, "has_led": false, "simulated": false, "is_golden": false,
-  "tile": "ready",  // ready | busy | awaiting_boot | pass | boot_unconfirmed | fail | net_stand | offline | interrupted | incomplete
+  "tile": "ready",  // ready | busy | awaiting_boot | pass | boot_unconfirmed | warn | fail | offline | interrupted | incomplete
   "job": {
     "job_id": "j_…", "batch_id": 3, "mode": "test_flash", "status": "running",
     "started_at": "…", "finished_at": null, "elapsed": 134, "boot_deadline": null,
@@ -278,7 +281,7 @@ PASS с неподтверждённой загрузкой показывает
 }
 ```
 
-Статусы задания (`job.status`): `queued | running | awaiting_boot | pass | fail | interrupted | cancelled | offline`.
+Статусы задания (`job.status`): `queued | running | awaiting_boot | pass | warn | fail | interrupted | cancelled | offline`.
 
 ### 3.2 Summary
 

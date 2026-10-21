@@ -33,10 +33,10 @@ def test_net_fail_still_flashes_and_checks_boot(client):
     a.close()
     assert boot_ok(client, "CPU0001")["job_id"] == jid
     job = client.get(f"/api/v1/jobs/{jid}").json()
-    assert job["status"] == "fail" and job["detail"] == "NET: UDP tx 48 Mbit/s<81 · прошита"
+    assert job["status"] == "warn" and job["detail"] == "NET: UDP tx 48 Mbit/s<81 · прошита"
     assert {s["stage"]: s for s in job["stages"]}["boot"]["state"] == "pass"
     # плата ушла со связи (загрузилась с SD-NAND): на плитке итог, а не «нет связи»
-    assert device(client, "CPU0001")["tile"] == "fail"
+    assert device(client, "CPU0001")["tile"] == "warn"
 
 
 def test_net_skip_option(client):
@@ -76,9 +76,9 @@ def test_most_boards_net_fail_is_stand_network(client):
         a.event(jid, "job_finished", data={"result": "fail" if i < 3 else "pass"})
     wait_for(lambda: device(client, "CPU0004")["tile"] == "pass")
     tiles = [device(client, f"CPU000{i}")["tile"] for i in range(1, 4)]
-    assert tiles == ["net_stand"] * 3
+    assert tiles == ["warn"] * 3
     summ = client.get("/api/v1/state").json()["summary"]
-    assert summ["net_stand"] == 3 and summ["fail"] == 0
+    assert summ["net_stand"] == 3 and summ["warn"] == 3 and summ["fail"] == 0
     for a in agents:
         a.close()
 
@@ -140,7 +140,7 @@ def test_flash_only_after_net_only_fail(client):
     fail_net(a, jid)
     a.pass_stage(jid, "sdnand")
     a.event(jid, "job_finished", data={"result": "fail"})
-    wait_for(lambda: device(client, "CPU0001")["tile"] == "fail")
+    wait_for(lambda: device(client, "CPU0001")["tile"] == "warn")
     start(client, "flash_only", [did], options={"allow_retest": True})
     jid2 = a.recv("job")["job_id"]
     a.ws.send_json({"type": "serial_request", "job_id": jid2})
@@ -160,4 +160,37 @@ def test_flash_only_refused_after_ram_fail(client):
     jid2 = a.recv("job")["job_id"]
     a.ws.send_json({"type": "serial_request", "job_id": jid2})
     assert a.recv("serial")["error"] == "device has no TEST_PASS"
+    a.close()
+
+
+def test_net_and_ram_fail_stays_fail(client):
+    # WARN только когда не прошла одна сеть: с FAIL памяти плата красная
+    a = Agent(client)
+    start(client, "test_only", [a.ack["device_id"]])
+    jid = a.recv("job")["job_id"]
+    a.event(jid, "stage_finished", "ram", {"state": "fail", "detail": "RAM: 2 err"})
+    fail_net(a, jid)
+    a.pass_stage(jid, "sdnand")
+    a.event(jid, "job_finished", data={"result": "fail"})
+    wait_for(lambda: device(client, "CPU0001")["tile"] == "fail")
+    assert client.get(f"/api/v1/jobs/{jid}").json()["status"] == "fail"
+    a.close()
+
+
+def test_old_net_fail_reclassified_to_warn(client):
+    a = Agent(client)
+    start(client, "test_only", [a.ack["device_id"]])
+    jid = a.recv("job")["job_id"]
+    a.pass_stage(jid, "ram")
+    fail_net(a, jid)
+    a.pass_stage(jid, "sdnand")
+    a.event(jid, "job_finished", data={"result": "fail"})
+    wait_for(lambda: device(client, "CPU0001")["tile"] == "warn")
+    f = client.app.state.core.factory
+    f.db.execute("UPDATE job SET status = 'fail', result = 'fail' WHERE id = ?", (jid,))
+    f.normalize_net_warn()
+    j = client.get(f"/api/v1/jobs/{jid}").json()
+    assert j["status"] == "warn" and j["detail"] == "NET: UDP tx 48 Mbit/s<81"
+    batch = client.get("/api/v1/batches").json()[0]
+    assert batch["warn"] == 1 and batch["fail"] == 0
     a.close()

@@ -29,7 +29,7 @@ onMounted(async () => {
       <thead>
         <tr>
           <th>Партия</th><th>Старт</th><th>Окончание</th><th>Оператор</th><th>Режим</th><th>Тип</th>
-          <th>microSD</th><th>ОС / образ</th><th>Плат</th><th>PASS</th><th>FAIL</th><th>Golden</th><th>Экспорт</th>
+          <th>microSD</th><th>ОС / образ</th><th>Плат</th><th>PASS</th><th>WARN</th><th>FAIL</th><th>Golden</th><th>Экспорт</th>
         </tr>
       </thead>
       <tbody>
@@ -44,6 +44,7 @@ onMounted(async () => {
           <td>{{ b.os ?? b.image_version ?? '—' }}</td>
           <td>{{ b.total }}</td>
           <td class="pass">{{ b.pass }}</td>
+          <td class="res-warn">{{ b.warn ?? 0 }}</td>
           <td class="fail">{{ b.fail }}</td>
           <td>{{ b.golden ?? '—' }}</td>
           <td>

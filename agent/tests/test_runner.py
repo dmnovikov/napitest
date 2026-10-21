@@ -76,12 +76,21 @@ def test_test_flash_no_flash_on_fail(agent_factory):
 
 
 def test_test_flash_net_fail_still_flashes(agent_factory, images):
-    # FAIL сети не мешает прошивке (сеть часто подводит стенд); итог задания всё равно FAIL
+    # FAIL сети не мешает прошивке (сеть часто подводит стенд); итог агента FAIL, сервер делает из него WARN
     a = agent_factory(fail_stage="net")
     job = run(run_job(a, "test_flash"))
     assert job["stages"]["net"]["state"] == "fail"
     assert job["stages"]["flash"]["state"] == "pass"
     assert job["result"] == "fail"
+    # светодиод не мигает «брак»: не прошла только сеть
+    assert [x for x in a.backend.log if x.startswith("led ")][-1] == "led normal"
+
+
+def test_ram_fail_blinks_fail_led(agent_factory):
+    a = agent_factory(fail_stage="ram")
+    job = run(run_job(a, "test_only"))
+    assert job["result"] == "fail"
+    assert [x for x in a.backend.log if x.startswith("led ")][-1] == "led fail"
 
 
 def test_flash_only(agent_factory):

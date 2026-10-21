@@ -260,7 +260,7 @@ const canLabel = computed(() => {
             <span class="arrow">{{ open.has(j.job_id) ? '▾' : '▸' }}</span>
             <span>{{ formatDateTime(j.started_at) }}</span>
             <span>{{ MODE_LABEL[j.mode] ?? j.mode }}</span>
-            <span class="chip" :class="stageClass(j.result === 'pass' || j.status === 'pass' ? 'pass' : j.status === 'fail' ? 'fail' : j.status === 'running' || j.status === 'awaiting_boot' ? 'running' : 'pending')">
+            <span class="chip" :class="stageClass(j.result === 'pass' || j.status === 'pass' ? 'pass' : j.status === 'warn' ? 'error' : j.status === 'fail' ? 'fail' : j.status === 'running' || j.status === 'awaiting_boot' ? 'running' : 'pending')">
               {{ JOB_STATUS_LABEL[j.status] ?? j.status }}
             </span>
             <span class="mono muted">{{ jobDuration(j) }}</span>

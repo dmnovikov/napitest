@@ -10,6 +10,11 @@ const shown = computed(() => shownStages(props.job))
 function stateOf(name: (typeof STAGES)[number]) {
   return props.job?.stages?.[name]?.state ?? 'pending'
 }
+// FAIL сети рыжим, а не красным: чаще это сеть стенда, а не брак платы
+function segClass(name: (typeof STAGES)[number]) {
+  const st = stateOf(name)
+  return stageClass(name === 'net' && st === 'fail' ? 'error' : st)
+}
 function titleOf(name: (typeof STAGES)[number]) {
   const s = props.job?.stages?.[name]
   const st = s?.state ?? 'pending'
@@ -24,7 +29,7 @@ function warnOf(name: (typeof STAGES)[number]) {
 <template>
   <div class="stagebar" :style="{ gridTemplateColumns: `repeat(${shown.length}, 1fr)` }">
     <div v-for="name in shown" :key="name" class="seg-wrap" :title="titleOf(name)">
-      <div class="seg" :class="stageClass(stateOf(name))">
+      <div class="seg" :class="segClass(name)">
         <span v-if="stateOf(name) === 'interrupted'" class="bang">!</span>
         <span v-if="warnOf(name)" class="warn-dot" />
       </div>
