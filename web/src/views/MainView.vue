@@ -237,11 +237,12 @@ function needSelection(
   retry: () => void,
   pool: DeviceView[] = devices.value.filter((d) => d.online),
   what = 'Все платы на связи',
+  noneText = 'Не выбрано ни одной платы: щёлкните по нужным плиткам',
 ): number[] | null {
   const ids = [...selected.value]
   if (ids.length) return ids
   if (!pool.length) {
-    say('Не выбрано ни одной платы: щёлкните по нужным плиткам', false, true)
+    say(noneText, false, true)
     return null
   }
   ask({
@@ -258,14 +259,16 @@ function needSelection(
   return null
 }
 
-/** Свободные платы на связи, которые не выбраны: вернувшаяся после выбора плата не должна молча остаться без проверки. */
-function unselectedIdle(): DeviceView[] {
-  return devices.value.filter(
-    (d) => d.online && !selected.value.has(d.device_id) && d.tile !== 'busy' && d.tile !== 'awaiting_boot',
-  )
+/** На плате уже идёт задание (тесты, прошивка или ожидание BOOTCHECK): новую партию на ней не запускаем. */
+function inWork(d: DeviceView): boolean {
+  return d.tile === 'busy' || d.tile === 'awaiting_boot'
 }
 
-async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golden' = 'production') {
+function skippedNos(ds: DeviceView[]): string {
+  return ds.map((d) => d.display_no).join(', ')
+}
+
+async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golden' = 'production', note = '') {
   const body = {
     mode,
     device_ids: ids,
@@ -296,43 +299,35 @@ async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golde
     }
     warnings = (await api.startBatch({ ...body, options: { ...body.options, allow_retest: true } }))?.warnings ?? []
   }
-  const text = `Запущено: ${MODE_LABEL[mode]}, плат: ${ids.length}`
+  // Выбор снимается: следующие платы оператор отмечает с нуля
+  selected.value = new Set()
+  const text = `Запущено: ${MODE_LABEL[mode]}, плат: ${ids.length}${note}`
   if (warnings.length) say(`${text}\n${warnings.join('\n')}`, false, true)
   else say(text)
 }
 
-function launch(mode: Mode, restChecked = false) {
-  const ids = needSelection(() => launch(mode))
-  if (!ids) return
-  const rest = restChecked ? [] : unselectedIdle()
-  if (rest.length) {
-    ask({
-      title: MODE_LABEL[mode],
-      message:
-        `Выбрано ${ids.length} из ${ids.length + rest.length} свободных плат на связи.\n` +
-        `Не выбраны: ${rest.map((d) => d.display_no).join(', ')}.`,
-      okText: 'Запустить без них',
-      danger: false,
-      cancelText: 'Отмена',
-      run: async () => queueMicrotask(() => launch(mode, true)),
-      alt: {
-        text: `Добавить их (${rest.length})`,
-        run: () => {
-          selected.value = new Set([...selected.value, ...rest.map((d) => d.device_id)])
-          launch(mode, true)
-        },
-      },
-    })
+function launch(mode: Mode) {
+  const free = devices.value.filter((d) => d.online && !inWork(d))
+  const picked = needSelection(() => launch(mode), free, 'Все свободные платы на связи',
+    'Свободных плат на связи нет: на всех уже идёт задание')
+  if (!picked) return
+  // Среди выбранных могут быть платы, где задание уже идёт: их пропускаем, а не отказываем всей партии
+  const skipped = selectedDevices.value.filter(inWork)
+  const ids = picked.filter((id) => !skipped.some((d) => d.device_id === id))
+  if (!ids.length) {
+    say(`На выбранных платах (${skippedNos(skipped)}) задание уже идёт: выберите свободные платы`, false, true)
     return
   }
+  const note = skipped.length ? `; уже проверяются, пропущены: ${skippedNos(skipped)}` : ''
+  const noteLine = skipped.length ? `\nУже проверяются, пропущены: ${skippedNos(skipped)}.` : ''
   if (mode === 'test_only') {
-    if (!missing.value) return void guarded(() => startBatch(mode, ids))
+    if (!missing.value) return void guarded(() => startBatch(mode, ids, 'production', note))
     ask({
       title: MODE_LABEL[mode],
-      message: `${shortageText()}${boardsLine(ids)}Запустить на выбранных (${ids.length})?`,
+      message: `${shortageText()}${boardsLine(ids)}Запустить на выбранных (${ids.length})?${noteLine}`,
       okText: 'Запустить',
       danger: false,
-      run: () => startBatch(mode, ids),
+      run: () => startBatch(mode, ids, 'production', note),
     })
     return
   }
@@ -352,11 +347,11 @@ function launch(mode: Mode, restChecked = false) {
   ask({
     title: MODE_LABEL[mode],
     message:
-      `${shortageText()}Плат выбрано: ${ids.length}.\n${boardsLine(ids)}ОС для внутреннего накопителя (SD-NAND): ${osName.value}\n(${osInfo.value.text})\n` +
+      `${shortageText()}Плат выбрано: ${ids.length}.${noteLine}\n${boardsLine(ids)}ОС для внутреннего накопителя (SD-NAND): ${osName.value}\n(${osInfo.value.text})\n` +
       `${warn}\n${boot}\nПродолжить?`,
     okText: 'Запустить',
     danger: true,
-    run: () => startBatch(mode, ids),
+    run: () => startBatch(mode, ids, 'production', note),
   })
 }
 
