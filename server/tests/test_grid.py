@@ -53,3 +53,27 @@ def test_refresh_keeps_offline_board_with_job(tmp_path):
         wait_for(lambda: not ids(c)[da]["online"])
         r = c.post("/api/v1/devices/refresh").json()
         assert r["hidden"] == 0 and r["kept_busy"] == "1" and da in ids(c)
+
+
+def test_lower_expected_hides_offline(tmp_path):
+    # Оператор убрал платы со стенда и уменьшил «Плат на стенде»: квадраты без связи скрываются сами
+    app = create_app(make_settings(tmp_path))
+    with TestClient(app) as c:
+        login(c)
+        a = Agent(c, cpuid="CPU0001", mac="02:00:00:00:00:01")
+        b = Agent(c, cpuid="CPU0002", mac="02:00:00:00:00:02")
+        d3 = Agent(c, cpuid="CPU0003", mac="02:00:00:00:00:03")
+        da, db, dc = a.ack["device_id"], b.ack["device_id"], d3.ack["device_id"]
+        assert c.put("/api/v1/expected", json={"count": 3}).json()["hidden"] == 0
+        b.close()
+        d3.close()
+        wait_for(lambda: not ids(c)[db]["online"] and not ids(c)[dc]["online"])
+        # плат на связи меньше нового числа — платы без связи остаются видны (какая-то не подключилась)
+        assert c.put("/api/v1/expected", json={"count": 2}).json()["hidden"] == 0
+        assert set(ids(c)) == {da, db, dc}
+        # плат на связи хватает — скрываются
+        assert c.put("/api/v1/expected", json={"count": 1}).json()["hidden"] == 2
+        assert set(ids(c)) == {da}
+        # увеличение числа ничего не скрывает
+        assert c.put("/api/v1/expected", json={"count": 5}).json()["hidden"] == 0
+        a.close()

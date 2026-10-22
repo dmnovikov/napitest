@@ -192,12 +192,22 @@ class Factory:
         row = self.db.one("SELECT value FROM meta WHERE key = 'expected_boards'")
         return int(row["value"]) if row else 0
 
-    def set_expected_boards(self, operator: dict, count: int) -> None:
+    def set_expected_boards(self, operator: dict, count: int) -> int:
+        """Число плат на стенде. Оператор уменьшил его, а плат на связи хватает — платы без связи убраны
+        со стенда: их квадраты скрываются, как по «Скрыть офлайн». Возвращает, сколько скрыто."""
         if not 0 <= count <= 500:
             raise FactoryError("число плат: от 0 до 500")
+        before = self.expected_boards()
         self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('expected_boards', ?)", (str(count),))
-        self.audit(operator["username"], "expected_boards", {"count": count})
+        hidden: list[int] = []
+        online = sum(1 for d in self._visible_devices() if self.is_online(d["id"]))
+        if 0 < count < before and online >= count:
+            hidden, _ = self._hide_offline()
+            if hidden:
+                self.grid_reset = True
+        self.audit(operator["username"], "expected_boards", {"count": count, "hidden": hidden})
         self.summary_dirty = True
+        return len(hidden)
 
     def _job(self, job_id: str | None):
         if not job_id:
@@ -1186,18 +1196,23 @@ class Factory:
         row = self.db.one("SELECT last_seen FROM device WHERE id = ?", (device_id,))
         return bool(row) and row["last_seen"] >= since
 
-    async def refresh_grid(self, operator: dict) -> dict:
-        """«Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки
-        (история остаётся), свободные агенты переподключаются и заново присылают IP, MAC и тип платы."""
-        visible = self._visible_devices()
+    def _hide_offline(self) -> tuple[list[int], list[int]]:
+        """Платы без связи и без активного задания уходят из сетки до следующего подключения
+        (история остаётся). Возвращает (скрытые, оставленные из-за задания)."""
         hidden, kept = [], []
-        for dev in visible:
+        for dev in self._visible_devices():
             if self.is_online(dev["id"]):
                 continue
             (kept if self._active_job(dev["id"]) is not None else hidden).append(dev["id"])
         since = self._grid_since()
         self._set_grid_hidden({d for d in self._grid_hidden() if d not in hidden and self._seen_since(d, since)}
                               | set(hidden))
+        return hidden, kept
+
+    async def refresh_grid(self, operator: dict) -> dict:
+        """«Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки
+        (история остаётся), свободные агенты переподключаются и заново присылают IP, MAC и тип платы."""
+        hidden, kept = self._hide_offline()
         reconnect = []
         idle = [d for d in self.agents if self.is_online(d) and self._active_job(d) is None
                 and not ((self.live.get(d) or {}).get("job_id") and not (self.live.get(d) or {}).get("finished"))]

@@ -58,7 +58,7 @@ export const api = {
   login: (username: string, password: string) =>
     request<unknown>('POST', '/auth/login', { username, password }),
   logout: () => request<unknown>('POST', '/auth/logout', {}),
-  setExpected: (count: number) => request<unknown>('PUT', '/expected', { count }),
+  setExpected: (count: number) => request<{ hidden?: number }>('PUT', '/expected', { count }),
   me: () => request<{ username: string }>('GET', '/auth/me'),
   state: () => request<{ devices: DeviceView[]; summary: Summary }>('GET', '/state'),
   startBatch: (body: {

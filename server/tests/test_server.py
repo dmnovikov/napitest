@@ -509,7 +509,7 @@ def test_blocked_stage_is_incomplete_not_fail(client):
 
 def test_expected_boards(client):
     assert client.get("/api/v1/state").json()["summary"]["expected"] == 0
-    assert client.put("/api/v1/expected", json={"count": 8}).json() == {"ok": True, "expected": 8}
+    assert client.put("/api/v1/expected", json={"count": 8}).json() == {"ok": True, "expected": 8, "hidden": 0}
     assert client.get("/api/v1/state").json()["summary"]["expected"] == 8
     assert client.put("/api/v1/expected", json={"count": -1}).status_code == 400
 

@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import type { RetestItem } from '../api/types'
+import { computed } from 'vue'
+import type { Mode, RetestItem } from '../api/types'
 import { MODE_LABEL, formatDateTime } from '../lib/format'
 
-defineProps<{ items: RetestItem[]; displayNo: (id: number) => number | string }>()
-defineEmits<{ (e: 'ok'): void; (e: 'cancel'): void }>()
+// «Только прошивка» спрашивает не про тесты, а про уже прошитую SD-NAND; rest — сколько выбранных плат не прошивались
+const props = defineProps<{ items: RetestItem[]; displayNo: (id: number) => number | string; mode: Mode; rest: number }>()
+defineEmits<{ (e: 'ok'): void; (e: 'cancel'): void; (e: 'rest'): void }>()
+const flash = computed(() => props.mode === 'flash_only')
 
 function name(i: RetestItem): string {
   if (i.serial) return i.serial
@@ -14,8 +17,10 @@ function name(i: RetestItem): string {
 <template>
   <div class="overlay" @click.self="$emit('cancel')">
     <div class="dialog" role="dialog" aria-modal="true">
-      <h3>Платы уже проверялись</h3>
-      <p class="msg">Эти платы (по cpuid) уже есть в базе. Проверить их повторно?</p>
+      <h3>{{ flash ? 'Платы уже прошивались' : 'Платы уже проверялись' }}</h3>
+      <p class="msg">
+        {{ flash ? 'SD-NAND этих плат уже прошита. Прошить заново?' : 'Эти платы (по cpuid) уже есть в базе. Проверить их повторно?' }}
+      </p>
       <div class="scroll">
         <table>
           <thead>
@@ -38,7 +43,8 @@ function name(i: RetestItem): string {
       </div>
       <div class="actions">
         <button @click="$emit('cancel')">Отмена</button>
-        <button class="primary" autofocus @click="$emit('ok')">Проверить повторно</button>
+        <button v-if="rest > 0" @click="$emit('rest')">{{ flash ? 'Только непрошитые' : 'Только непроверенные' }} ({{ rest }})</button>
+        <button class="primary" autofocus @click="$emit('ok')">{{ flash ? 'Прошить заново' : 'Проверить повторно' }}</button>
       </div>
     </div>
   </div>
@@ -58,7 +64,8 @@ function name(i: RetestItem): string {
   background: #fff;
   border-radius: 10px;
   padding: 20px 24px;
-  min-width: 480px;
+  min-width: min(480px, calc(100vw - 32px));
+  box-sizing: border-box;
   max-width: 760px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
 }
@@ -96,6 +103,9 @@ th {
 }
 .st.pass {
   color: #16a34a;
+}
+.st.warn {
+  color: var(--orange);
 }
 .st.fail,
 .st.interrupted {

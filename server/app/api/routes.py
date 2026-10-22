@@ -249,10 +249,10 @@ def set_board(body: BoardIn, request: Request, op: dict = Depends(operator)):
 @router.put("/expected")
 def set_expected(body: ExpectedIn, request: Request, op: dict = Depends(operator)):
     try:
-        core(request).factory.set_expected_boards(op, body.count)
+        hidden = core(request).factory.set_expected_boards(op, body.count)
     except FactoryError as exc:
         return handle(exc)
-    return {"ok": True, "expected": body.count}
+    return {"ok": True, "expected": body.count, "hidden": hidden}
 
 
 @router.get("/devices/{device_id}/label", response_class=HTMLResponse)

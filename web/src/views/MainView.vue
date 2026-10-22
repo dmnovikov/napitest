@@ -109,8 +109,9 @@ function saveExpected() {
     return
   }
   void guarded(async () => {
-    await api.setExpected(n)
-    say(n ? `На стенде ожидается плат: ${n}` : 'Ожидаемое число плат не задано')
+    const r = await api.setExpected(n)
+    const gone = r?.hidden ? `; скрыто плат без связи: ${r.hidden}` : ''
+    say(n ? `На стенде ожидается плат: ${n}${gone}` : 'Ожидаемое число плат не задано')
   })
 }
 function shortageText(): string {
@@ -133,14 +134,16 @@ interface Pending {
 }
 const pending = ref<Pending | null>(null)
 
-// Предупреждение «платы уже проверялись»: промис решается кнопкой диалога
-const retest = ref<{ items: RetestItem[]; resolve: (ok: boolean) => void } | null>(null)
-function askRetest(items: RetestItem[]): Promise<boolean> {
+// Предупреждение «платы уже проверялись» («уже прошивались» для «Только прошивка»): промис решается кнопкой
+// диалога — все выбранные, только остальные (rest) или отмена
+type RetestAnswer = 'all' | 'rest' | false
+const retest = ref<{ items: RetestItem[]; mode: Mode; rest: number; resolve: (ok: RetestAnswer) => void } | null>(null)
+function askRetest(items: RetestItem[], mode: Mode, rest: number): Promise<RetestAnswer> {
   return new Promise((resolve) => {
-    retest.value = { items, resolve }
+    retest.value = { items, mode, rest, resolve }
   })
 }
-function answerRetest(ok: boolean) {
+function answerRetest(ok: RetestAnswer) {
   const r = retest.value
   retest.value = null
   r?.resolve(ok)
@@ -268,7 +271,8 @@ function skippedNos(ds: DeviceView[]): string {
   return ds.map((d) => d.display_no).join(', ')
 }
 
-async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golden' = 'production', note = '') {
+async function startBatch(mode: Mode, picked: number[], kind: 'production' | 'golden' = 'production', note = '') {
+  let ids = picked
   const body = {
     mode,
     device_ids: ids,
@@ -290,14 +294,21 @@ async function startBatch(mode: Mode, ids: number[], kind: 'production' | 'golde
   } catch (e) {
     const items = kind === 'production' ? retestList(e) : null
     if (!items) throw e
+    const seen = new Set(items.map((i) => i.device_id))
+    const rest = ids.filter((id) => !seen.has(id))
     busy.value = false
-    const ok = await askRetest(items)
+    const ok = await askRetest(items, mode, rest.length)
     busy.value = true
     if (!ok) {
-      say(`Не запущено: ${MODE_LABEL[mode]} — платы уже проверялись`, true)
+      say(`Не запущено: ${MODE_LABEL[mode]} — платы уже ${mode === 'flash_only' ? 'прошивались' : 'проверялись'}`, true)
       return
     }
-    warnings = (await api.startBatch({ ...body, options: { ...body.options, allow_retest: true } }))?.warnings ?? []
+    if (ok === 'rest') {
+      ids = rest
+      warnings = (await api.startBatch({ ...body, device_ids: ids }))?.warnings ?? []
+    } else {
+      warnings = (await api.startBatch({ ...body, options: { ...body.options, allow_retest: true } }))?.warnings ?? []
+    }
   }
   // Выбор снимается: следующие платы оператор отмечает с нуля
   selected.value = new Set()
@@ -607,8 +618,11 @@ function exportCsv() {
     <RetestDialog
       v-if="retest"
       :items="retest.items"
+      :mode="retest.mode"
+      :rest="retest.rest"
       :display-no="displayNo"
-      @ok="answerRetest(true)"
+      @ok="answerRetest('all')"
+      @rest="answerRetest('rest')"
       @cancel="answerRetest(false)"
     />
   </div>
