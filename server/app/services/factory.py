@@ -613,8 +613,15 @@ class Factory:
             await conn.send(msg)
 
     def _sync_now(self) -> bool:
-        """Карты обновляют образы только между партиями: скачивание не мешает тесту сети и записи."""
-        return self.db.one("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1") is None
+        """Карты не качают образы, пока у какой-либо платы впереди или идёт тест сети: скачивание исказило бы
+        замер. Прошивка и остальные этапы чужому скачиванию не мешают; плата с заданием своё останавливает сама."""
+        for job in self.db.all("SELECT id, params_json FROM job WHERE status IN ('queued','running')"):
+            if not ((loads(job["params_json"], {}) or {}).get("stages") or {}).get("net"):
+                continue
+            row = self.db.one("SELECT state FROM stage_result WHERE job_id = ? AND stage = 'net'", (job["id"],))
+            if row is None or row["state"] in ("pending", "running"):
+                return False
+        return True
 
     def resolve_os(self, options: dict, device_ids: list[int]) -> tuple[dict, dict]:
         """Выбор меню «ОС для внутреннего накопителя» → параметры FLASH для агента и поля задания для отчёта."""
@@ -1175,7 +1182,7 @@ class Factory:
                    {"batch": name, "mode": mode, "kind": kind, "devices": device_ids, "options": options or {},
                     "boards": boards,
                     **({"os": os_job.get("os_name"), "image": os_job.get("image_file")} if os_job else {})})
-        self._sync_allowed = False       # партия идёт: карты не качают образы (см. tick)
+        self._sync_allowed = self._sync_now()    # тест сети впереди: карты не качают образы (см. tick)
         await self.push_catalog()
         if (options or {}).get("allow_retest"):
             self.audit(operator["username"], "retest_confirmed",

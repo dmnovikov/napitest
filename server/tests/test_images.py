@@ -191,14 +191,14 @@ def test_start_batch_with_os(tmp_path, web):
         wait_for(lambda: variant(c, "armbian")["cards"]["ready"] == 1)
         r = c.post("/api/v1/batches", json=body)
         assert r.status_code == 200, r.text
-        while True:                                          # партия идёт: карты не качают
+        while True:                                          # прошивка без теста сети: карты качают дальше
             msg = a.recv()
             if msg["type"] == "job":
                 job = msg
                 break
             if msg["type"] == "images":
                 sync = msg["sync"]
-        assert sync is False
+        assert sync is True
         fl = job["params"]["flash"]
         assert fl["manifest_file"] == f"catalog/{cur['file'][:-8]}.manifest.json"
         assert fl["os"] == "armbian" and fl["os_name"] == "Armbian 2026.09" and fl["image_version"] == "2026.09"
@@ -207,6 +207,34 @@ def test_start_batch_with_os(tmp_path, web):
         assert detail["image_file"] == "Armbian_2026.09.img.xz"
         csv = c.get(f"/api/v1/batches/{r.json()['batch_id']}/export.csv").text
         assert "Armbian 2026.09" in csv and url in csv
+    finally:
+        close_agents()
+        c.__exit__(None, None, None)
+
+
+def test_sync_paused_only_until_net_done(tmp_path):
+    """Скачивание на карты стоит, пока у платы впереди или идёт тест сети, и возобновляется после него."""
+    c = make_client(tmp_path)
+    try:
+        a = Agent(c, "CPU1")
+        r = c.post("/api/v1/batches", json={"mode": "test_only", "device_ids": [a.ack["device_id"]]})
+        assert r.status_code == 200, r.text
+        sync = None
+        while True:
+            msg = a.recv()
+            if msg["type"] == "job":
+                job = msg
+                break
+            if msg["type"] == "images":
+                sync = msg["sync"]
+        assert job["params"]["stages"]["net"] is True and sync is False
+        a.event(job["job_id"], "job_started")
+        a.pass_stage(job["job_id"], "ram")
+        a.pass_stage(job["job_id"], "net")                   # задание ещё идёт (SD-NAND), но сеть уже проверена
+        while True:
+            msg = a.recv("images")
+            if msg["sync"]:
+                break
     finally:
         close_agents()
         c.__exit__(None, None, None)
