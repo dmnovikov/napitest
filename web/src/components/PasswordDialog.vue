@@ -46,7 +46,7 @@ function submit() {
       </label>
       <label>
         Пароль входа (подтверждение)
-        <input v-model="password" type="password" autocomplete="current-password" :autofocus="!askName && !askUrl" />
+        <input v-model="password" type="password" placeholder="пароль на вход" autocomplete="current-password" :autofocus="!askName && !askUrl" />
       </label>
       <p v-if="error" class="err">{{ error }}</p>
       <div class="actions">

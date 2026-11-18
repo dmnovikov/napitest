@@ -163,9 +163,6 @@ const STATE: Record<string, string> = {
         <span class="spacer" />
         <button :disabled="i === 0" title="Выше" @click="move(v, -1)">↑</button>
         <button :disabled="i === regular.length - 1" title="Ниже" @click="move(v, 1)">↓</button>
-        <button @click="rename(v)">Переименовать</button>
-        <button class="warn" @click="changeUrl(v)">Изменить ссылку</button>
-        <button @click="toggle(v)">{{ v.visible ? 'Убрать' : 'Вернуть' }}</button>
       </div>
       <div v-if="v.current" class="cur">
         <div><span class="lbl">Файл:</span> <span class="mono">{{ v.current.source_file }}</span>
@@ -188,6 +185,11 @@ const STATE: Record<string, string> = {
         <div v-if="v.next.state === 'working' && v.next.pct != null" class="bar">
           <span :style="{ width: Math.min(100, v.next.pct) + '%' }" />
         </div>
+      </div>
+      <div class="ops">
+        <button @click="rename(v)">Переименовать</button>
+        <button class="warn" @click="changeUrl(v)">Изменить ссылку</button>
+        <button @click="toggle(v)">{{ v.visible ? 'Убрать' : 'Вернуть' }}</button>
       </div>
     </div>
 
@@ -290,6 +292,12 @@ const STATE: Record<string, string> = {
 }
 .spacer {
   flex: 1;
+}
+.ops {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
 }
 .pill {
   font-size: 11px;
