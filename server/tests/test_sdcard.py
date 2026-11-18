@@ -21,6 +21,11 @@ def make_base(tmp_path) -> str:
     head[446 + 4] = 0x83
     struct.pack_into("<II", head, 446 + 8, 2048, fs.stat().st_size // 512)
     head[510:512] = b"\x55\xaa"
+    old = tmp_path / "old.service"                     # юнит первого запуска с кольцом зависимостей
+    old.write_text("[Unit]\nAfter=local-fs.target\nBefore=ssh.socket\n")
+    subprocess.run(["debugfs", "-w", "-f", "-", str(fs)], check=True, capture_output=True, text=True,
+                   input="mkdir /etc\nmkdir /etc/systemd\nmkdir /etc/systemd/system\n"
+                         f"write {old} /etc/systemd/system/napi-sd-firstboot.service\n")
     disk = tmp_path / "base.img"
     disk.write_bytes(bytes(head) + fs.read_bytes())
     out = tmp_path / "napi-sd-base-1.img.zst"
@@ -55,6 +60,8 @@ def test_sd_image_build_download_and_rebuild(tmp_path):
         assert b"def tree_hash" in fs.cat("/opt/napi-factory/agent/napi_factory_agent/selfupdate.py")
         unit = fs.run(["stat /etc/systemd/system/multi-user.target.wants/napi-factory-agent.service"])
         assert "Type: symlink" in unit
+        firstboot = fs.cat("/etc/systemd/system/napi-sd-firstboot.service").decode()
+        assert "DefaultDependencies=no" in firstboot and "sockets.target" in firstboot
         mode = fs.run(["stat /etc/napi-factory/agent.yaml"])
         assert "Mode:  0600" in mode and "User:     0" in mode
         fs.fsck()

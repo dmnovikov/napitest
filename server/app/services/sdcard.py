@@ -54,6 +54,13 @@ def _selfupdate():
     return mod
 
 
+def _cardfix():
+    spec = importlib.util.spec_from_file_location("napi_agent_cardfix", AGENT_SRC / "cardfix.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def ws_url(public_url: str) -> str:
     """http://host:port → ws://host:port/ws/agent (пусто: карта ищет сервер сама)."""
     u = (public_url or "").strip().rstrip("/")
@@ -147,6 +154,8 @@ class SdCard:
         su = _selfupdate()
         self.agent_version = su.tree_hash(AGENT_SRC)
         self.agent_pkg = su.pack(AGENT_SRC)
+        fix = _cardfix()
+        self.firstboot_path, self.firstboot_unit = "/" + fix.UNIT_PATH, fix.FIRSTBOOT_UNIT
         self.agent_sha = hashlib.sha256(self.agent_pkg).hexdigest()
         self.progress: dict | None = None        # {"stage", "pct", "text"} пока идёт работа
         self.error: str | None = None
@@ -187,7 +196,8 @@ class SdCard:
 
     def inputs_key(self, base: dict | None) -> str:
         h = hashlib.sha256()
-        for part in ((base or {}).get("sha256", ""), self.agent_version, self.agent_yaml(), self.unit()):
+        for part in ((base or {}).get("sha256", ""), self.agent_version, self.agent_yaml(), self.unit(),
+                     self.firstboot_unit):
             h.update(part.encode() + b"\0")
         return h.hexdigest()[:16]
 
@@ -377,6 +387,11 @@ class SdCard:
             "/opt/napi-factory/VERSION": (sd_version.encode() + b"\n", 0o644),
             f"/etc/systemd/system/{UNIT}": (self.unit().encode(), 0o644),
         }
+        # База до 2026.11 несёт юнит первого запуска с кольцом зависимостей (SSH поднимался не каждый раз):
+        # кладём исправленный, тот же, каким агент чинит уже выпущенные карты.
+        fb_dir, fb_name = self.firstboot_path.rsplit("/", 1)
+        if any(n == fb_name for n, _ in fs.ls(fb_dir) or []):
+            files[self.firstboot_path] = (self.firstboot_unit.encode(), 0o644)
         cmds = fs.rm_tree_cmds("/opt/napi-factory/agent")
         for path in files:
             cmds.append(f"rm {path}")
