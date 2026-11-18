@@ -264,3 +264,110 @@ def test_default_os_is_sd_image_for_api_clients(client):
     fl = a.recv("job")["params"]["flash"]
     assert fl["os"] == "sd" and fl["manifest_file"].endswith(".manifest.json") and "/" not in fl["manifest_file"]
     assert json.dumps(fl, ensure_ascii=False).count("Образ на microSD") == 1
+
+
+def test_flash_with_old_image_while_new_downloads(tmp_path, web):
+    """Ссылку сменили: у платы с недокачанным новым образом шьётся прежний, но только с подтверждения."""
+    url1 = web("os-1.0.img.xz", disk_image(seed=1))
+    c = make_client(tmp_path, os_images=[{"key": "armbian", "name": "Armbian", "url": url1}])
+    try:
+        old = wait_ready(c, "armbian")["current"]
+        url2 = web("os-2.0.img.xz", disk_image(seed=2))
+        assert c.put("/api/v1/images/armbian", json={"url": url2, "password": "secret-pass"}).status_code == 200
+        wait_for(lambda: variant(c, "armbian")["current"]["version"] == "2.0")
+        new = variant(c, "armbian")["current"]
+        a, b, n = Agent(c, "CPU1"), Agent(c, "CPU2"), Agent(c, "CPU3")
+        da, db_, dn = a.ack["device_id"], b.ack["device_id"], n.ack["device_id"]
+        a.ws.send_json({"type": "images_status", "files": {new["file"]: {"state": "ready"}}})
+        b.ws.send_json({"type": "images_status", "files": {
+            old["file"]: {"state": "ready", "old": True}, new["file"]: {"state": "downloading", "pct": 40.0}}})
+        n.ws.send_json({"type": "images_status", "files": {new["file"]: {"state": "downloading", "pct": 12.0}}})
+
+        def flash_of(dev):
+            return next(d for d in c.get("/api/v1/state").json()["devices"] if d["device_id"] == dev)["flash"]
+        wait_for(lambda: flash_of(db_).get("armbian", {}).get("state") == "old")
+        assert flash_of(da)["armbian"] == {"state": "ready"}
+        assert flash_of(db_)["armbian"] == {"state": "old", "pct": 40.0, "version": "1.0"}
+        assert flash_of(dn)["armbian"] == {"state": "none", "pct": 12.0}
+
+        body = {"mode": "flash_only", "device_ids": [da, db_, dn], "confirm": True, "options": {"os": "armbian"}}
+        r = c.post("/api/v1/batches", json=body)                 # у третьей платы шить нечем
+        assert r.status_code == 409 and "ещё не на картах" in r.json()["detail"]
+        body["device_ids"] = [da, db_]
+        r = c.post("/api/v1/batches", json=body)
+        assert r.status_code == 409, r.text
+        info = r.json()["extra"]["old_image"]
+        assert info["version"] == "2.0" and len(info["new"]) == 1
+        assert [(o["version"], o["pct"]) for o in info["old"]] == [("1.0", 40.0)]
+        body["options"]["allow_old_image"] = True
+        r = c.post("/api/v1/batches", json=body)
+        assert r.status_code == 200, r.text
+
+        def job_of(agent):
+            while True:
+                msg = agent.recv()
+                if msg["type"] == "job":
+                    return msg
+        ja, jb = job_of(a), job_of(b)
+        assert ja["params"]["flash"]["image_version"] == "2.0"
+        assert ja["params"]["flash"]["manifest_file"] == f"catalog/{new['file'][:-8]}.manifest.json"
+        assert jb["params"]["flash"]["image_version"] == "1.0"
+        assert jb["params"]["flash"]["manifest_file"] == f"catalog/{old['file'][:-8]}.manifest.json"
+        assert jb["params"]["flash"]["os_name"] == "Armbian 1.0 (прежний образ)"
+        detail = c.get(f"/api/v1/jobs/{jb['job_id']}").json()
+        assert detail["os_name"] == "Armbian 1.0 (прежний образ)" and detail["image_url"] == url1
+        csv = c.get(f"/api/v1/batches/{r.json()['batch_id']}/export.csv").text
+        assert "Armbian 1.0 (прежний образ)" in csv and "Armbian 2.0" in csv
+        start = next(x for x in c.get("/api/v1/audit").json() if x["action"] == "batch_start")
+        assert list(start["detail"]["old_image"].values()) == ["Armbian 1.0 (прежний образ)"]
+    finally:
+        close_agents()
+        c.__exit__(None, None, None)
+
+
+def test_reboot_button(client):
+    a = Agent(client, "CPU1")
+    dev = a.ack["device_id"]
+    assert client.post("/api/v1/devices/reboot", json={"device_ids": []}).status_code == 400
+    r = client.post("/api/v1/devices/reboot", json={"device_ids": [dev]})
+    assert r.status_code == 200 and r.json() == {"sent": [dev]}
+    while a.recv()["type"] != "reboot":
+        pass
+    assert any(x["action"] == "reboot" for x in client.get("/api/v1/audit").json())
+    assert client.post("/api/v1/batches", json={"mode": "test_only", "device_ids": [dev]}).status_code == 200
+    r = client.post("/api/v1/devices/reboot", json={"device_ids": [dev]})
+    assert r.status_code == 409 and "идёт задание" in r.json()["detail"]
+    close_agents()
+
+
+def test_card_reader(tmp_path, monkeypatch):
+    import json as _json
+    monkeypatch.setenv("NAPI_CARD_READER_REQUEST", str(tmp_path / "missing" / "request"))
+    monkeypatch.setenv("NAPI_CARD_READER_STATUS", str(tmp_path / "run" / "status.json"))
+    c = make_client(tmp_path)
+    try:
+        assert c.get("/api/v1/sdcard/reader").json() == {"available": False}
+        assert c.post("/api/v1/sdcard/reader", json={"action": "load"}).status_code == 409
+        assert c.post("/api/v1/sdcard/reader", json={"action": "rm -rf"}).status_code == 422
+    finally:
+        c.__exit__(None, None, None)
+    (tmp_path / "rd").mkdir()
+    (tmp_path / "run").mkdir()
+    monkeypatch.setenv("NAPI_CARD_READER_REQUEST", str(tmp_path / "rd" / "request"))
+    c = make_client(tmp_path)
+    try:
+        assert c.get("/api/v1/sdcard/reader").json()["state"] == "idle"
+        r = c.post("/api/v1/sdcard/reader", json={"action": "load"})
+        assert r.status_code == 200 and r.json()["state"] == "working"
+        req = _json.loads((tmp_path / "rd" / "request").read_text())
+        assert req["action"] == "load"
+        assert c.post("/api/v1/sdcard/reader", json={"action": "check"}).status_code == 409   # уже идёт
+        import time as _time
+        (tmp_path / "run" / "status.json").write_text(_json.dumps({
+            "state": "done", "action": "load", "started": _time.time(), "ts": _time.time(), "error": None,
+            "cards": [{"dev": "/dev/sdb1", "images": [{"file": "armbian-6.img.zst", "state": "ready"}]}]}))
+        v = c.get("/api/v1/sdcard/reader").json()
+        assert v["state"] == "done" and v["cards"][0]["images"][0]["state"] == "ready"
+        assert any(x["action"] == "card_reader_load" for x in c.get("/api/v1/audit").json())
+    finally:
+        c.__exit__(None, None, None)

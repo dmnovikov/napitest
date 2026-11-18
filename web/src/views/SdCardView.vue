@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import PasswordDialog from '../components/PasswordDialog.vue'
 import { api, links } from '../api/http'
-import type { SdCardInfo } from '../api/types'
+import type { CardReaderInfo, SdCardInfo } from '../api/types'
 import { formatBytes, formatDateTime } from '../lib/format'
 
 const info = ref<SdCardInfo | null>(null)
@@ -12,6 +12,40 @@ const dialog = ref(false)
 const dialogError = ref<string | null>(null)
 const busy = ref(false)
 let timer: number | undefined
+const reader = ref<CardReaderInfo | null>(null)
+const readerError = ref<string | null>(null)
+const readerBusy = ref(false)
+let readerTimer: number | undefined
+
+async function loadReader() {
+  try {
+    reader.value = await api.cardReader()
+  } catch {
+    /* страница работает и без кардридера */
+  }
+  clearTimeout(readerTimer)
+  readerTimer = window.setTimeout(loadReader, reader.value?.state === 'working' ? 1000 : 15000)
+}
+async function readerDo(action: 'check' | 'load') {
+  readerBusy.value = true
+  readerError.value = null
+  try {
+    reader.value = await api.cardReaderDo(action)
+    clearTimeout(readerTimer)
+    readerTimer = window.setTimeout(loadReader, 1000)
+  } catch (e) {
+    readerError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    readerBusy.value = false
+  }
+}
+const readerWorking = computed(() => reader.value?.state === 'working')
+function cardState(i: { state: string; have?: number; size: number }) {
+  if (i.state === 'ready') return 'на карте, проверен'
+  if (i.state === 'partial') return `скачан частично: ${formatBytes(i.have ?? 0)} из ${formatBytes(i.size)}`
+  if (i.state === 'unverified') return 'файл есть, но не проверен'
+  return 'нет на карте'
+}
 
 async function load() {
   try {
@@ -23,8 +57,14 @@ async function load() {
   clearTimeout(timer)
   timer = window.setTimeout(load, info.value?.progress ? 2000 : 10000)
 }
-onMounted(load)
-onUnmounted(() => clearTimeout(timer))
+onMounted(() => {
+  load()
+  loadReader()
+})
+onUnmounted(() => {
+  clearTimeout(timer)
+  clearTimeout(readerTimer)
+})
 
 const img = computed(() => info.value?.image ?? null)
 const agent = computed(() => info.value?.agent ?? null)
@@ -100,6 +140,39 @@ async function rebuild(v: { url: string; password: string }) {
       <ul v-if="agent?.errors.length" class="errs">
         <li v-for="(e, i) in agent.errors" :key="i">Плата {{ e.no ?? '?' }}: {{ e.detail }}</li>
       </ul>
+    </div>
+
+    <div v-if="reader?.available" class="card">
+      <h3>Обновление карты вручную</h3>
+      <p class="muted">
+        Вставьте тестовую microSD в кардридер сервера стенда. Образы ОС запишутся на неё прямо с сервера, за минуты
+        и без сети плат. На работу плат на стенде это не влияет. После записи плата с этой картой ничего не скачивает.
+      </p>
+      <div class="row">
+        <button :disabled="readerBusy || readerWorking" @click="readerDo('check')">Проверить карту</button>
+        <button class="primary" :disabled="readerBusy || readerWorking" @click="readerDo('load')">
+          Записать образы на карту
+        </button>
+      </div>
+      <div v-if="readerError" class="warnbox">{{ readerError }}</div>
+      <div v-if="readerWorking" class="progress">
+        <div>
+          {{ reader.action === 'load' ? 'Идёт запись, карту не вынимать' : 'Проверка карты' }}<template v-if="reader.progress">:
+            {{ reader.progress.text }} <span class="mono">{{ reader.progress.file }}</span> — {{ Math.round(reader.progress.pct) }} %</template>
+        </div>
+        <div v-if="reader.progress" class="bar"><span :style="{ width: Math.min(100, reader.progress.pct) + '%' }" /></div>
+      </div>
+      <div v-else-if="reader.state === 'error'" class="warnbox">{{ reader.error }}</div>
+      <div v-else-if="reader.state === 'done'" class="okbox">
+        {{ reader.action === 'load' ? 'Образы записаны и сверены: карту можно вынимать.' : 'Карта проверена, изменений не было.' }}
+      </div>
+      <div v-for="c in reader.cards ?? []" :key="c.dev" class="facts">
+        <div><span class="lbl">Карта:</span> <span class="mono">{{ c.dev }}</span><template v-if="c.version"> · версия карты {{ c.version }}</template></div>
+        <div v-for="i in c.images" :key="i.file">
+          <span class="mono">{{ i.source_file }}</span> · {{ formatBytes(i.size) }} —
+          <span :class="{ amber: i.state !== 'ready' }">{{ cardState(i) }}</span>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -218,6 +291,17 @@ h3 {
   background: #fff6e0;
   border: 1px solid #f0d27a;
   color: #8a4b00;
+}
+.row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.okbox {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #e8f4ea;
+  border: 1px solid #bfe0c6;
 }
 .amber {
   color: #9a6700;

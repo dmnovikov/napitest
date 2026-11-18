@@ -1,0 +1,9 @@
+[Unit]
+Description=NAPI Factory Test: запрос со страницы «microSD» на работу с картой в кардридере
+
+[Path]
+PathChanged=/var/lib/napi-factory/cardreader/request
+Unit=napi-card-reader.service
+
+[Install]
+WantedBy=multi-user.target

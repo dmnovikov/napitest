@@ -37,10 +37,15 @@ DROP_PREFIX = ("opt/napi-factory/agent", "opt/napi-factory/VERSION", "opt/napi-f
                "etc/systemd/system/multi-user.target.wants/napi-factory-agent.service",
                "etc/ssh/ssh_host_")
 
+# Тот же текст, что в agent/napi_factory_agent/cardfix.py (агент чинит им уже выпущенные карты).
+# DefaultDependencies=no: иначе «после basic.target» и «до ssh.socket» дают кольцо зависимостей,
+# и systemd на части загрузок не поднимает SSH.
 FIRSTBOOT_UNIT = """[Unit]
 Description=NAPI test microSD: SSH host keys for this card
+DefaultDependencies=no
 After=local-fs.target
-Before=ssh.service ssh.socket
+Before=ssh.service ssh.socket sockets.target shutdown.target
+Conflicts=shutdown.target
 ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
 
 [Service]

@@ -1,9 +1,10 @@
 """Образы ОС с сервера на тестовую microSD (меню «ОС для внутреннего накопителя»).
 
 Сервер присылает {"type": "images", "sync": bool, "images": [{"file", "manifest"}]}. Агент держит в
-images/catalog ровно эти образы: недостающие скачивает с сервера (с докачкой), сверяет sha256,
-лишние удаляет. Качает и удаляет только между партиями (sync от сервера) и когда у платы нет
-задания: скачивание не мешает тесту сети и записи SD-NAND. «Образ на microSD» (images/) не трогается.
+images/catalog эти образы: недостающие скачивает с сервера (с докачкой), сверяет sha256.
+Прежние образы остаются на карте, пока новые не скачаны и не проверены (ими можно прошивать);
+раньше они удаляются, только если на карте не хватает места. Качает и удаляет только когда разрешил
+сервер (sync) и у платы нет задания. «Образ на microSD» (images/) не трогается.
 """
 
 from __future__ import annotations
@@ -33,6 +34,10 @@ CATALOG = "catalog"
 
 class SyncError(Exception):
     pass
+
+
+class SyncRetry(SyncError):
+    """Сбой связи: тот же образ докачивается при следующей попытке, очередь на другой образ не уходит."""
 
 
 class SyncCancelled(Exception):
@@ -81,6 +86,11 @@ class ImageSync:
             man = read_json(self.dir / n)
             if isinstance(man, dict) and man.get("file") and self._verified(man):
                 self.status[man["file"]] = {"state": "ready"}
+
+    def _old_ready(self, file: str) -> bool:
+        """Прежний образ (сервер его больше не раздаёт) цел на карте: годится для прошивки."""
+        man = read_json(self.dir / f"{base_of(file)}.manifest.json")
+        return isinstance(man, dict) and man.get("file") == file and self._verified(man)
 
     def _set(self, file: str, state: str, pct: float | None = None, detail: str | None = None,
              force: bool = False) -> None:
@@ -153,7 +163,10 @@ class ImageSync:
         wanted = {i["file"]: i["manifest"] for i in self.wanted}
         for file in list(self.status):
             if file not in wanted:
-                self.status.pop(file, None)
+                if self._old_ready(file):
+                    self.status[file] = {"state": "ready", "old": True}
+                else:
+                    self.status.pop(file, None)
         for file, man in wanted.items():
             if (self.status.get(file) or {}).get("state") != "ready":
                 if self._verified(man):
@@ -166,7 +179,7 @@ class ImageSync:
         up = getattr(self.agent, "updater", None)
         if up is not None and up.needed():
             await self._update(up)          # при успехе агент перезапускается и сюда не возвращается
-        self._remove_stale(set(wanted))
+        self._remove_stale(set(wanted), parts_only=True)
         for file, man in wanted.items():
             if (self.status.get(file) or {}).get("state") == "ready":
                 continue
@@ -174,15 +187,21 @@ class ImageSync:
                 return
             self._cancel = threading.Event()
             try:
-                await asyncio.to_thread(self._fetch, file, man, self._cancel)
+                await asyncio.to_thread(self._fetch, file, man, self._cancel, set(wanted))
                 self._set(file, "ready", force=True)
                 log.info("образ %s на карте", file)
             except SyncCancelled:
                 self._set(file, "waiting", detail="пауза: идёт задание", force=True)
                 return
+            except SyncRetry as e:
+                log.warning("образ %s: %s", file, e)
+                self._set(file, "error", detail=str(e), force=True)
+                return
             except SyncError as e:
                 log.warning("образ %s: %s", file, e)
                 self._set(file, "error", detail=str(e), force=True)
+        if all((self.status.get(f) or {}).get("state") == "ready" for f in wanted):
+            self._remove_stale(set(wanted))         # новые образы на месте: прежние больше не нужны
 
     async def _update(self, up: Any) -> None:
         """Новая версия агента с сервера (selfupdate): скачать, проверить, переключить, перезапуститься."""
@@ -204,19 +223,28 @@ class ImageSync:
         await asyncio.sleep(0.5)            # hello уходит на сервер до перезапуска
         up.restart()
 
-    def _remove_stale(self, keep: set[str]) -> None:
+    def _remove_stale(self, keep: set[str], parts_only: bool = False) -> None:
+        """Убрать с карты лишнее: недокачанные куски чужих образов, а без parts_only и прежние образы."""
         try:
             names = os.listdir(self.dir)
         except OSError:
             return
         keep_names = keep | {f"{base_of(f)}.manifest.json" for f in keep} | {f + ".part" for f in keep}
+        removed = False
         for n in names:
-            if n not in keep_names and (n.endswith((".img.zst", ".manifest.json", ".part"))):
-                try:
-                    (self.dir / n).unlink()
-                    log.info("удалён старый образ %s", n)
-                except OSError:
-                    pass
+            if n in keep_names or not n.endswith((".part",) if parts_only else (".img.zst", ".manifest.json", ".part")):
+                continue
+            try:
+                (self.dir / n).unlink()
+                log.info("удалён старый образ %s", n)
+                removed = True
+            except OSError:
+                pass
+        if not parts_only:
+            for file in [f for f in self.status if f not in keep]:
+                self.status.pop(file, None)
+            if removed:
+                self._report()
 
     # ------------------------------------------------------------------ скачивание (поток)
     def _url(self, file: str) -> str:
@@ -225,7 +253,7 @@ class ImageSync:
             raise SyncError("нет связи с сервером")
         return f"{base}/api/v1/agent/images/{file}"
 
-    def _fetch(self, file: str, man: dict, cancel: threading.Event) -> None:
+    def _fetch(self, file: str, man: dict, cancel: threading.Event, keep: set[str] | None = None) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         need = int(man["compressed_size"])
         part = self.dir / (file + ".part")
@@ -234,6 +262,9 @@ class ImageSync:
             part.unlink()
             have = 0
         free = shutil.disk_usage(self.dir).free
+        if free < need - have + RESERVE and keep is not None:
+            self._remove_stale(keep)                # места на оба образа нет: прежний удаляется сразу
+            free = shutil.disk_usage(self.dir).free
         if free < need - have + RESERVE:
             raise SyncError(f"мало места на microSD: нужно {(need - have) >> 20} МБ, свободно {free >> 20} МБ")
         h = hashlib.sha256()
@@ -249,7 +280,7 @@ class ImageSync:
         except urllib.error.HTTPError as e:
             raise SyncError(f"сервер: HTTP {e.code}") from e
         except (urllib.error.URLError, OSError) as e:
-            raise SyncError(f"сервер: {getattr(e, 'reason', e)}") from e
+            raise SyncRetry(f"сервер: {getattr(e, 'reason', e)}") from e
         with resp:
             if have and resp.status != 206:      # сервер отдал файл целиком
                 have = 0
@@ -262,7 +293,9 @@ class ImageSync:
                     try:
                         buf = resp.read(CHUNK)
                     except OSError as e:
-                        raise SyncError(f"обрыв скачивания: {e}") from e
+                        out.flush()
+                        os.fsync(out.fileno())
+                        raise SyncRetry(f"обрыв скачивания: {e}") from e
                     if not buf:
                         break
                     out.write(buf)
@@ -272,7 +305,7 @@ class ImageSync:
                 out.flush()
                 os.fsync(out.fileno())
         if got != need:
-            raise SyncError(f"скачано {got >> 20} из {need >> 20} МБ")
+            raise SyncRetry(f"скачано {got >> 20} из {need >> 20} МБ")
         if h.hexdigest() != man["compressed_sha256"]:
             part.unlink()
             raise SyncError("контрольная сумма не совпала, файл удалён")

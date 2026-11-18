@@ -67,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     agent = Agent(cfg, backend, state_dir)
+    if args.backend == "real":
+        from .cardfix import repair
+        for line in repair():
+            log.info("карта: %s", line)
     if args.backend == "real" and agent.cpuid and agent.state.get("machine_id_for") != agent.cpuid:
         # Клоны карт имеют одинаковый machine-id: регенерируем один раз на плату
         if regenerate_machine_id("/"):

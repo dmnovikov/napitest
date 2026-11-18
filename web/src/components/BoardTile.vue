@@ -18,7 +18,7 @@ import {
   tileTimer,
 } from '../lib/format'
 
-const props = defineProps<{ device: DeviceView; selected: boolean }>()
+const props = defineProps<{ device: DeviceView; selected: boolean; osKey?: string; osName?: string }>()
 defineEmits<{ (e: 'pick', ev: MouseEvent): void; (e: 'open'): void }>()
 
 // Плату перезагрузили после прошлой проверки: квадрат «готова», старый итог — только пометкой
@@ -32,6 +32,32 @@ const bootChecked = computed(
   () => props.device.tile === 'pass' && props.device.job?.stages?.boot?.state === 'pass',
 )
 const board = computed(() => boardBadge(props.device.board))
+// Что прошито (версия образа) — у плат с выполненной прошивкой
+const flashed = computed(() => {
+  const j = shownJob.value
+  return j && j.os_name && j.stages?.flash?.state === 'pass' ? j.os_name : ''
+})
+// Можно ли прошить плату ОС, выбранной в меню: образ на карте / только прежний / шить нечем (не красным: не брак)
+const img = computed(() => {
+  const d = props.device
+  const f = props.osKey ? d.flash?.[props.osKey] : undefined
+  if (!f || !d.online || d.tile === 'busy' || d.tile === 'awaiting_boot' || flashed.value) return null
+  const pct = f.pct != null ? ` ${Math.round(f.pct)} %` : ''
+  const os = props.osName ?? 'образ'
+  if (f.state === 'ready') return { cls: 'img-ready', text: 'образ на карте', title: `${os}: образ на карте, плату можно прошивать` }
+  if (f.state === 'old') {
+    return {
+      cls: 'img-old',
+      text: `прежний образ${f.version ? ' ' + f.version : ''} · новый${pct || ' ждёт'}`,
+      title: `${os}: новый образ ещё качается на карту${pct ? ' (' + pct.trim() + ')' : ''}. Прошить можно прежним${f.version ? ' (' + f.version + ')' : ''}: стенд спросит подтверждение`,
+    }
+  }
+  return {
+    cls: 'img-none',
+    text: `образа нет${pct ? ' · качается' + pct : ''}`,
+    title: `${os}: образа на карте нет${pct ? ', скачано' + pct : ''}. Прошить плату пока нельзя, тесты запускать можно`,
+  }
+})
 const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
 // PASS, но BOOTCHECK не подтвердил загрузку с SD-NAND: жёлтая плитка, проверить глазами
 const bootUnconfirmed = computed(() => props.device.tile === 'boot_unconfirmed')
@@ -101,6 +127,8 @@ const title = computed(() => {
       <span v-if="mac" class="mac short">{{ shortMac(mac) }}</span>
     </div>
     <StageBar :job="shownJob" labels />
+    <div v-if="flashed" class="img img-done" :title="`Прошито: ${flashed}`">{{ flashed }}</div>
+    <div v-else-if="img" class="img" :class="img.cls" :title="img.title">{{ img.text }}</div>
     <div v-if="prev" class="prev" :class="'prev-' + prev.status" :title="prevLine">{{ prevLine }}</div>
     <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn || bootUnconfirmed || netWarn }" :title="lineTitle">
       <span v-if="passWarn || bootUnconfirmed || netWarn" class="warn-ico">⚠</span>{{ line }}
@@ -188,6 +216,29 @@ const title = computed(() => {
   background: #ffe08a;
   color: #6b4500;
   border: 1px solid #e3b23c;
+}
+.img {
+  font-size: 11.5px;
+  line-height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.img-ready {
+  color: #2f7d32;
+}
+.img-old {
+  color: #8a5a00;
+  background: #fff3cd;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.img-none {
+  color: #6b7280;
+  background: #eceef1;
+  border-radius: 3px;
+  padding: 0 4px;
 }
 .sn {
   font-family: var(--mono);

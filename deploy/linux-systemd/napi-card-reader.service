@@ -1,0 +1,12 @@
+[Unit]
+Description=NAPI Factory Test: образы ОС на тестовую microSD через кардридер сервера
+# Запускается napi-card-reader.path по запросу сервера стенда. Сервер работает без прав root,
+# поэтому монтирование карты вынесено сюда; из запроса берётся только действие (check | load).
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/napi-factory/server.env
+RuntimeDirectory=napi-card-reader
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/python3 /opt/napi-factory-test/scripts/card-load-images.py --request /var/lib/napi-factory/cardreader/request --status /run/napi-card-reader/status.json
+TimeoutStartSec=3600

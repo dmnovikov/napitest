@@ -2,6 +2,7 @@ import type {
   AuditRow,
   BatchDetail,
   BatchRow,
+  CardReaderInfo,
   DeviceDetail,
   DeviceView,
   ImageHistoryRow,
@@ -74,6 +75,8 @@ export const api = {
       os?: string
       zero?: 'quick' | 'full'
       allow_retest?: boolean
+      /** Согласие прошить часть плат прежним образом (новый ещё качается на карты) */
+      allow_old_image?: boolean
       /** «Без проверки сети» */
       net_skip?: boolean
       /** Тип плат для всей партии (запоминается у плат); не задан — как определено у каждой */
@@ -105,6 +108,9 @@ export const api = {
   setBoard: (device_ids: number[], board: BoardType | null) =>
     request<{ warnings: string[] }>('PUT', '/devices/board', { device_ids, board }),
   sdcard: () => request<SdCardInfo>('GET', '/sdcard'),
+  cardReader: () => request<CardReaderInfo>('GET', '/sdcard/reader'),
+  cardReaderDo: (action: 'check' | 'load') => request<CardReaderInfo>('POST', '/sdcard/reader', { action }),
+  reboot: (device_ids: number[]) => request<{ sent: number[] }>('POST', '/devices/reboot', { device_ids }),
   publicStatus: () => request<PublicStatus>('GET', '/public'),
   sdRebuild: (password: string, url?: string) =>
     request<unknown>('POST', '/sdcard', { password, url: url || null }),

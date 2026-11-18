@@ -20,6 +20,7 @@ from ..scheduler.bootnet import BootNet, subnet_hosts
 from ..scheduler.net import Grant, NetScheduler
 from .catalog import CUSTOM, SD, ZERO, Catalog
 from .sdcard import SdCard
+from .cardreader import CardReader
 from ..version import __version__
 
 log = logging.getLogger("napi.factory")
@@ -150,8 +151,11 @@ class Factory:
         # Образ тестовой microSD для скачивания и пакет агента для автообновления карт
         self.sdcard = SdCard(settings, profile, self._sd_changed)
         self.card_agent: dict[int, dict] = {}                # device_id -> {agent_version, update, sd_image}
+        self.cardreader = CardReader()
         self._catalog_dirty = False
         self._sync_allowed: bool | None = None
+        self._image_rows: dict[str, Any] = {}
+        self._flash_images_cache: list | None = None
 
     def _sd_changed(self) -> None:
         self.summary_dirty = True
@@ -159,6 +163,7 @@ class Factory:
     def _catalog_changed(self) -> None:
         # Вызывается и из потока подготовки образа: только флаги, рассылка — в tick
         self._catalog_dirty = True
+        self._flash_images_cache = None
         self.summary_dirty = True
 
     # ------------------------------------------------------------------ служебное
@@ -479,6 +484,7 @@ class Factory:
             "tested_before": bool(dev["tested_pass"]) or self.db.one(
                 "SELECT 1 FROM job j JOIN batch b ON b.id = j.batch_id WHERE j.device_id = ? AND b.kind = 'production'"
                 " AND j.status IN ('pass','warn','fail','interrupted','offline','incomplete') LIMIT 1", (dev["id"],)) is not None,
+            "flash": self.card_flash_view(dev["id"]) if self.is_online(dev["id"]) else {},
             "tile": "ready" if previous else self.tile(dev["id"], job),
             "job": self.job_view(job) if job is not None else None,
             "previous": previous,
@@ -623,8 +629,10 @@ class Factory:
                 return False
         return True
 
-    def resolve_os(self, options: dict, device_ids: list[int]) -> tuple[dict, dict]:
-        """Выбор меню «ОС для внутреннего накопителя» → параметры FLASH для агента и поля задания для отчёта."""
+    def resolve_os(self, options: dict, device_ids: list[int]) -> tuple[dict[int, tuple[dict, dict]], dict]:
+        """Выбор меню «ОС для внутреннего накопителя» → по каждой плате (параметры FLASH для агента, поля задания
+        для отчёта) и поля партии. Платы одной партии могут получить разные версии образа: у кого новый образ
+        ещё качается, шьётся прежним (с подтверждения оператора, allow_old_image)."""
         key = options.get("os") or SD
         if key == SD:
             missing = [d for d in device_ids if not (self.card_agent.get(d) or {}).get("sd_image", True)]
@@ -634,17 +642,19 @@ class Factory:
                 raise FactoryError("на microSD плат " + ", ".join(nos) + " нет встроенного образа:"
                                    " выберите ОС из меню", 409)
             ver = self.profile.image_version
-            return ({"os": SD, "os_name": "Образ на microSD"},
-                    {"os_key": SD, "os_name": "Образ на microSD", "image_version": ver,
-                     "image_file": self.profile.section("flash").get("image_file"), "image_url": None})
+            one = ({"os": SD, "os_name": "Образ на microSD"},
+                   {"os_key": SD, "os_name": "Образ на microSD", "image_version": ver,
+                    "image_file": self.profile.section("flash").get("image_file"), "image_url": None})
+            return {d: one for d in device_ids}, one[1]
         if key == ZERO:
             zero = options.get("zero") or "quick"
             if zero not in ("quick", "full"):
                 raise FactoryError("zero: quick | full")
             name = "Zeroimage (полная)" if zero == "full" else "Zeroimage"
-            return ({"os": ZERO, "os_name": name, "method": "zero", "full": zero == "full"},
-                    {"os_key": ZERO, "os_name": name, "image_version": "zeroimage", "image_file": None,
-                     "image_url": None})
+            one = ({"os": ZERO, "os_name": name, "method": "zero", "full": zero == "full"},
+                   {"os_key": ZERO, "os_name": name, "image_version": "zeroimage", "image_file": None,
+                    "image_url": None})
+            return {d: one for d in device_ids}, one[1]
         img = self.catalog.current(key)
         if img is None:
             v = self.db.one("SELECT name FROM os_variant WHERE key = ?", (key,))
@@ -653,21 +663,88 @@ class Factory:
             raise FactoryError(f"образ «{v['name']}» ещё не готов на сервере", 409)
         if key != CUSTOM and not img["visible"]:
             raise FactoryError(f"ОС «{img['vname']}» убрана из меню")
-        not_ready = []
+
+        def pair(row, old: bool) -> tuple[dict, dict]:
+            name = f"{img['vname']} {row['version']}" if row["version"] else img["vname"]
+            if old:
+                name += " (прежний образ)"
+            return ({"os": key, "os_name": name,
+                     "manifest_file": f"catalog/{row['file'][:-len('.img.zst')]}.manifest.json",
+                     "image_version": row["version"], "image_file": row["file"]},
+                    {"os_key": key, "os_name": name, "image_version": row["version"],
+                     "image_file": row["source_file"], "image_url": row["url"]})
+
+        per: dict[int, tuple[dict, dict]] = {}
+        not_ready, old, fresh = [], [], []
         for d in device_ids:
-            st = (self.card_images.get(d) or {}).get(img["file"]) or {}
-            if st.get("state") != "ready":
-                dev = self.db.one("SELECT display_no FROM device WHERE id = ?", (d,))
-                pct = f" {st['pct']:.0f} %" if st.get("state") == "downloading" and st.get("pct") is not None else ""
-                not_ready.append(f"{dev['display_no'] if dev else d}{pct}")
+            ci = self.card_image(d, img)
+            no = (self.db.one("SELECT display_no FROM device WHERE id = ?", (d,)) or {"display_no": d})["display_no"]
+            if ci["state"] == "ready":
+                per[d] = pair(img, False)
+                fresh.append(no)
+            elif ci["state"] == "old":
+                per[d] = pair(ci["row"], True)
+                old.append({"no": no, "version": ci["row"]["version"], "file": ci["row"]["source_file"],
+                            "pct": ci.get("pct")})
+            else:
+                not_ready.append(f"{no} {ci['pct']:.0f} %" if ci.get("pct") is not None else f"{no}")
         if not_ready:
             raise FactoryError(f"образ «{img['vname']}» ещё не на картах плат: {', '.join(not_ready)}", 409,
                                {"not_ready": not_ready})
-        name = f"{img['vname']} {img['version']}" if img["version"] else img["vname"]
-        return ({"os": key, "os_name": name, "manifest_file": f"catalog/{img['file'][:-len('.img.zst')]}.manifest.json",
-                 "image_version": img["version"], "image_file": img["file"]},
-                {"os_key": key, "os_name": name, "image_version": img["version"], "image_file": img["source_file"],
-                 "image_url": img["url"]})
+        if old and not options.get("allow_old_image"):
+            # Новый образ ещё качается, на карте цел прежний: шить им можно, но только с согласия оператора
+            raise FactoryError("у части плат на карте только прежний образ", 409,
+                               {"old_image": {"name": img["vname"], "version": img["version"],
+                                              "file": img["source_file"], "old": old, "new": fresh}})
+        return per, (pair(img, False)[1] if fresh or not old else per[device_ids[0]][1])
+
+    def _image_row(self, file: str):
+        """Строка os_image по имени файла на карте (имя содержит id образа и не переиспользуется)."""
+        if file not in self._image_rows:
+            self._image_rows[file] = self.db.one(
+                "SELECT i.id, i.variant_id, i.file, i.version, i.source_file, i.url FROM os_image i WHERE i.file = ?",
+                (file,))
+        return self._image_rows[file]
+
+    def card_image(self, device_id: int, img) -> dict:
+        """Что лежит на карте платы для текущего образа варианта img:
+        ready — он сам; old — цел прежний образ того же варианта (row), новый качается (pct); none — шить нечем."""
+        files = self.card_images.get(device_id) or {}
+        st = files.get(img["file"]) or {}
+        if st.get("state") == "ready":
+            return {"state": "ready"}
+        out: dict[str, Any] = {"state": "none", "pct": st.get("pct") if st.get("state") == "downloading" else None}
+        best = None
+        for name, fst in files.items():
+            if name == img["file"] or fst.get("state") != "ready":
+                continue
+            row = self._image_row(name)
+            if row is not None and row["variant_id"] == img["variant_id"] and (best is None or row["id"] > best["id"]):
+                best = row
+        if best is not None:
+            out.update(state="old", row=best)
+        return out
+
+    def card_flash_view(self, device_id: int) -> dict:
+        """Для плитки: можно ли прошить плату каждой ОС из меню. {ключ: {state, pct?, version?}}"""
+        out = {}
+        for img in self._flash_images():
+            ci = self.card_image(device_id, img)
+            item: dict[str, Any] = {"state": ci["state"]}
+            if ci.get("pct") is not None:
+                item["pct"] = ci["pct"]
+            if ci["state"] == "old":
+                item["version"] = ci["row"]["version"]
+            out[img["vkey"]] = item
+        return out
+
+    def _flash_images(self) -> list:
+        if self._flash_images_cache is None:
+            self._flash_images_cache = self.db.all(
+                "SELECT i.*, v.name AS vname, v.key AS vkey, v.visible FROM os_variant v"
+                " JOIN os_image i ON i.id = v.current_image_id"
+                " WHERE i.state = 'ready' AND (v.visible = 1 OR v.kind = 'custom') ORDER BY v.sort, v.id")
+        return self._flash_images_cache
 
     def state(self, operator: str | None = None) -> dict:
         devices = self.devices_view()
@@ -1124,9 +1201,11 @@ class Factory:
             seen = self.previously_tested(device_ids, mode)
             if seen:
                 raise FactoryError("часть плат уже проверялась", 409, {"retest": seen})
-        os_flash, os_job = ({}, {}) if mode not in DESTRUCTIVE_MODES else self.resolve_os(options or {}, device_ids)
+        os_per, os_job = ({}, {}) if mode not in DESTRUCTIVE_MODES else self.resolve_os(options or {}, device_ids)
         try:
-            params = self.profile.job_params(mode, options, self.settings.destructive_override, os_flash)
+            # Параметры задания по каждой плате: версия образа у плат одной партии может различаться
+            params_for = {d: self.profile.job_params(mode, options, self.settings.destructive_override,
+                                                     (os_per.get(d) or ({}, {}))[0]) for d in device_ids}
         except ValueError as exc:
             raise FactoryError(str(exc)) from exc
         # Тип плат для всей партии: запоминается у плат, как «Тип платы» на панели выбора
@@ -1163,6 +1242,8 @@ class Factory:
             dev = self.db.one("SELECT * FROM device WHERE id = ?", (device_id,))
             board = board_of(dev)
             boards[board] = boards.get(board, 0) + 1
+            params = params_for[device_id]
+            dev_os = (os_per.get(device_id) or ({}, {}))[1]
             if board in NO_NET and params["stages"].get("net"):
                 dev_params = {**params, "stages": {**params["stages"], "net": False},
                               "skip_reason": {**(params.get("skip_reason") or {}), "net": NO_NET[board]},
@@ -1174,14 +1255,17 @@ class Factory:
                 " agent_version, os_key, os_name, image_file, image_url, board_type, board_detected, uplink_iface)"
                 " VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (job_id, batch_id, device_id, mode, now, dumps(dev_params), dev["test_sd_version"], dev["agent_version"],
-                 os_job.get("os_key"), os_job.get("os_name"), os_job.get("image_file"), os_job.get("image_url"),
+                 dev_os.get("os_key"), dev_os.get("os_name"), dev_os.get("image_file"), dev_os.get("image_url"),
                  board, dev["board_detected"], dev["uplink_iface"]),
             )
             job_ids.append(job_id)
         self.audit(operator["username"], "batch_start",
                    {"batch": name, "mode": mode, "kind": kind, "devices": device_ids, "options": options or {},
                     "boards": boards,
-                    **({"os": os_job.get("os_name"), "image": os_job.get("image_file")} if os_job else {})})
+                    **({"os": os_job.get("os_name"), "image": os_job.get("image_file")} if os_job else {}),
+                    **({"old_image": {self._nos([d]): v[1].get("os_name") for d, v in os_per.items()
+                                      if v[1].get("image_file") != os_job.get("image_file")}}
+                       if any(v[1].get("image_file") != os_job.get("image_file") for v in os_per.values()) else {})})
         self._sync_allowed = self._sync_now()    # тест сети впереди: карты не качают образы (см. tick)
         await self.push_catalog()
         if (options or {}).get("allow_retest"):
@@ -1308,6 +1392,24 @@ class Factory:
             raise FactoryError("плата не на связи", 409)
         await conn.send({"type": "identify", "seconds": 10})
         self.audit(operator["username"], "identify", {"device_id": device_id})
+
+    async def reboot(self, operator: dict, device_ids: list[int]) -> dict:
+        """«Перезагрузить плату»: команда агенту на карте. Не выполняется, пока у платы есть задание."""
+        device_ids = sorted(set(int(d) for d in device_ids))
+        if not device_ids:
+            raise FactoryError("не выбрано ни одной платы")
+        offline = [d for d in device_ids if d not in self.agents or not self.is_online(d)]
+        if offline:
+            raise FactoryError(f"нет связи с платами {self._nos(offline)}: перезагрузить их со стенда нельзя", 409)
+        busy = [d for d in device_ids if self._active_job(d) is not None]
+        if busy:
+            raise FactoryError(f"у плат {self._nos(busy)} идёт задание: перезагрузка запрещена", 409, busy)
+        sent = []
+        for d in device_ids:
+            if await self.agents[d].send({"type": "reboot"}):
+                sent.append(d)
+        self.audit(operator["username"], "reboot", {"devices": device_ids, "sent": sent})
+        return {"sent": sent}
 
     async def retry_boot(self, operator: dict, device_ids: list[int]) -> dict:
         """«Только BOOTCHECK»: прошитые платы, у которых загрузка с SD-NAND не подтвердилась (оператор

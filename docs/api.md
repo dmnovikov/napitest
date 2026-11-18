@@ -115,6 +115,7 @@
 {"type":"serial","job_id":"j_…","serial":"NC-2610-0017","batch":"B-20261010-01","date":"2026-10-10"}
 {"type":"serial","job_id":"j_…","error":"device has no TEST_PASS"}
 {"type":"identify","seconds":10}
+{"type":"reboot"}                      // перезагрузка платы; агент не выполняет, пока идёт задание
 {"type":"images","sync":true,"images":[{"file":"armbian-3.img.zst","manifest":{…манифест…}}],
  "agent":{"version":"3f9c1a0b7d2e","sha256":"…","size":151234}}
 {"type":"error","detail":"…"}
@@ -248,6 +249,7 @@ PASS с неподтверждённой загрузкой показывает
 | POST | `/devices/bootcheck` | «Только BOOTCHECK» `{"device_ids":[…]}`: последнее задание каждой платы снова ждёт загрузку с SD-NAND (FLASH пройден, загрузка не подтверждена); платы без связи допустимы. 409 с причиной для неподходящих плат. Ответ `{"jobs"}` |
 | POST | `/devices/refresh` | «Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки до следующего подключения, свободные агенты переподключаются; ответ `{"hidden","kept_busy","reconnect"}` |
 | POST | `/devices/{id}/identify` | мигание LED |
+| POST | `/devices/reboot` | `{device_ids}`: перезагрузить платы (на связи и без задания) |
 | POST | `/devices/{id}/golden` | `{"is_golden": true}` |
 | GET | `/devices/{id}/label` | HTML-этикетка с QR (только при PASS и наличии серийника) |
 | GET | `/jobs/{job_id}` | задание: этапы, измерения, лог, события |
@@ -337,6 +339,15 @@ Cookie-сессия обязательна. Сообщения сервер → 
 REST: `GET /api/v1/sdcard` (состояние, прогресс, версии агента на картах), `POST /api/v1/sdcard`
 `{"password", "url"?}` (пересобрать / новая база по ссылке; пароль входа, запись в журнал),
 `GET /api/v1/sdcard/download` (файл образа, без входа: ссылка есть в инструкции оператора).
+
+Карта в кардридере сервера: `GET /api/v1/sdcard/reader` (состояние: `available`, `state`, `cards`, `progress`),
+`POST /api/v1/sdcard/reader` `{"action": "check" | "load"}`. Сервер кладёт запрос в файл, скрипт
+`scripts/card-load-images.py` запускает от root systemd (`napi-card-reader.path`).
+
+Прежний образ: карта сообщает в `images_status` и прежние образы (`{"state": "ready", "old": true}`), пока
+новый не скачан. `POST /batches` для таких плат отвечает 409 с `extra.old_image` (кто чем будет прошит);
+повтор с `options.allow_old_image: true` запускает партию. В `/state` у платы `flash: {ключ ОС: {state:
+ready | old | none, pct, version}}`.
 
 **Автообновление агента**: между партиями (`sync: true`) и без задания агент, у которого версия не
 совпадает с `agent.version`, скачивает `GET /api/v1/agent/update/<version>.tar.gz` (Bearer-токен),

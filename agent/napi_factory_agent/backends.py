@@ -104,6 +104,9 @@ class Backend:
     def identify(self, seconds: int) -> None:
         pass
 
+    def reboot(self) -> None:
+        """Перезагрузка платы по кнопке на стенде."""
+
     def led_mode(self, mode: str) -> None:
         """«fail» — частое мигание: так оператор находит бракованную плату на стенде; «normal» — как было."""
 
@@ -263,6 +266,10 @@ class RealBackend(Backend):
             self._led_state = mode
             self._led_gen += 1
             self._led_apply(mode)
+
+    def reboot(self) -> None:
+        os.sync()
+        subprocess.Popen(["systemctl", "reboot"])
 
     def identify(self, seconds: int) -> None:
         """Горит непрерывно seconds секунд, затем прежний режим (heartbeat или мигание брака)."""
@@ -516,6 +523,9 @@ class MockBackend(Backend):
 
     def identify(self, seconds):
         self.log.append(f"identify {seconds}s")
+
+    def reboot(self):
+        self.log.append("reboot")
 
     def led_mode(self, mode):
         self.log.append(f"led {mode}")

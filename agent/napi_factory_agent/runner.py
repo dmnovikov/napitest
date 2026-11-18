@@ -235,8 +235,21 @@ class Agent:
             self.images.on_catalog(msg)
         elif t == "identify":
             asyncio.get_running_loop().run_in_executor(None, self.backend.identify, int(msg.get("seconds", 10)))
+        elif t == "reboot":
+            await self.reboot()
         elif t == "error":
             log.warning("сервер: %s", msg.get("detail"))
+
+    async def reboot(self) -> bool:
+        """Перезагрузка по кнопке на стенде. Во время задания не выполняется: запись SD-NAND прерывать нельзя."""
+        if self.job and not self.job.get("finished"):
+            log.warning("перезагрузка отклонена: идёт задание")
+            return False
+        log.info("перезагрузка по команде со стенда")
+        self.images.pause()                 # скачивание останавливается, скачанное остаётся и докачается
+        await asyncio.sleep(1.5)
+        await asyncio.get_running_loop().run_in_executor(None, self.backend.reboot)
+        return True
 
     async def submit(self, msg: dict[str, Any]) -> bool:
         self.loop = self.loop or asyncio.get_running_loop()

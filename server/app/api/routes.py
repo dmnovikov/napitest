@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from ..services.cardreader import CardReaderError
 from ..services.catalog import CatalogError
 from ..services.factory import FactoryError
 from ..services.sdcard import SdError
@@ -96,6 +97,10 @@ class CustomIn(BaseModel):
 class SdRebuildIn(BaseModel):
     password: str = ""
     url: str | None = None
+
+
+class CardReaderIn(BaseModel):
+    action: Literal["check", "load"]
 
 
 class BootOkIn(BaseModel):
@@ -214,6 +219,14 @@ async def retry_boot(body: StopIn, request: Request, op: dict = Depends(operator
     """«Только BOOTCHECK»: заново ждать загрузку с SD-NAND у прошитых плат, где она не подтвердилась."""
     try:
         return await core(request).factory.retry_boot(op, body.device_ids)
+    except FactoryError as exc:
+        return handle(exc)
+
+
+@router.post("/devices/reboot")
+async def reboot(body: StopIn, request: Request, op: dict = Depends(operator)):
+    try:
+        return await core(request).factory.reboot(op, body.device_ids)
     except FactoryError as exc:
         return handle(exc)
 
@@ -378,6 +391,24 @@ def sdcard_rebuild(body: SdRebuildIn, request: Request, op: dict = Depends(opera
         return JSONResponse({"detail": str(exc), "extra": None}, status_code=exc.status)
     f.audit(op["username"], "sd_rebuild", {"url": body.url} if body.url else None)
     return {"ok": True}
+
+
+@router.get("/sdcard/reader")
+def card_reader(request: Request, op: dict = Depends(operator)):
+    return core(request).factory.cardreader.view()
+
+
+@router.post("/sdcard/reader")
+def card_reader_request(body: CardReaderIn, request: Request, op: dict = Depends(operator)):
+    """Карта в кардридере сервера: показать, что на ней, или записать текущие образы ОС."""
+    f = core(request).factory
+    try:
+        f.cardreader.request(body.action)
+    except CardReaderError as exc:
+        return JSONResponse({"detail": str(exc), "extra": None}, status_code=exc.status)
+    if body.action == "load":
+        f.audit(op["username"], "card_reader_load", None)
+    return f.cardreader.view()
 
 
 @router.get("/public")

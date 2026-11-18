@@ -10,6 +10,8 @@ WorkingDirectory=/opt/napi-factory-test/server
 ExecStart=/opt/napi-factory-test/server/.venv/bin/python -m app.main
 Restart=on-failure
 RestartSec=3
+# Открытые скачивания образов картами держат остановку: дольше 15 с не ждём (карты докачают с места обрыва)
+TimeoutStopSec=15
 User=napi-factory
 Group=napi-factory
 StateDirectory=napi-factory

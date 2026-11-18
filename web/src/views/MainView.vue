@@ -11,7 +11,7 @@ import { live } from '../api/live'
 import type { BoardType, DeviceView, Mode, RetestItem } from '../api/types'
 import { BOARD_NAME, MODE_LABEL, formatTime, osLine } from '../lib/format'
 import { session } from '../session'
-import { retestList } from '../lib/retest'
+import { oldImageInfo, oldImageText, retestList } from '../lib/retest'
 
 const router = useRouter()
 
@@ -147,6 +147,18 @@ function answerRetest(ok: RetestAnswer) {
   const r = retest.value
   retest.value = null
   r?.resolve(ok)
+}
+// Вопрос «да/нет» посреди запуска партии: промис решается кнопкой диалога
+const yesNo = ref<{ title: string; message: string; okText: string; danger: boolean; resolve: (ok: boolean) => void } | null>(null)
+function askYesNo(q: { title: string; message: string; okText: string; danger: boolean }): Promise<boolean> {
+  return new Promise((resolve) => {
+    yesNo.value = { ...q, resolve }
+  })
+}
+function answerYesNo(ok: boolean) {
+  const q = yesNo.value
+  yesNo.value = null
+  q?.resolve(ok)
 }
 function displayNo(id: number): number | string {
   return live.devices.get(id)?.display_no ?? id
@@ -289,25 +301,44 @@ async function startBatch(mode: Mode, picked: number[], kind: 'production' | 'go
     },
   }
   let warnings: string[] = []
-  try {
-    warnings = (await api.startBatch(body))?.warnings ?? []
-  } catch (e) {
-    const items = kind === 'production' ? retestList(e) : null
-    if (!items) throw e
-    const seen = new Set(items.map((i) => i.device_id))
-    const rest = ids.filter((id) => !seen.has(id))
-    busy.value = false
-    const ok = await askRetest(items, mode, rest.length)
-    busy.value = true
-    if (!ok) {
-      say(`Не запущено: ${MODE_LABEL[mode]} — платы уже ${mode === 'flash_only' ? 'прошивались' : 'проверялись'}`, true)
-      return
-    }
-    if (ok === 'rest') {
-      ids = rest
-      warnings = (await api.startBatch({ ...body, device_ids: ids }))?.warnings ?? []
-    } else {
-      warnings = (await api.startBatch({ ...body, options: { ...body.options, allow_retest: true } }))?.warnings ?? []
+  let options: typeof body.options & { allow_retest?: boolean; allow_old_image?: boolean } = body.options
+  for (;;) {
+    try {
+      warnings = (await api.startBatch({ ...body, device_ids: ids, options }))?.warnings ?? []
+      break
+    } catch (e) {
+      const items = kind === 'production' && !options.allow_retest ? retestList(e) : null
+      const old = options.allow_old_image ? null : oldImageInfo(e)
+      if (items) {
+        const seen = new Set(items.map((i) => i.device_id))
+        const rest = ids.filter((id) => !seen.has(id))
+        busy.value = false
+        const ok = await askRetest(items, mode, rest.length)
+        busy.value = true
+        if (!ok) {
+          say(`Не запущено: ${MODE_LABEL[mode]} — платы уже ${mode === 'flash_only' ? 'прошивались' : 'проверялись'}`, true)
+          return
+        }
+        if (ok === 'rest') ids = rest
+        else options = { ...options, allow_retest: true }
+      } else if (old) {
+        // Новый образ скачан не на все карты: часть плат можно прошить прежним, но только с согласия оператора
+        busy.value = false
+        const ok = await askYesNo({
+          title: 'Часть плат будет прошита прежним образом',
+          message: oldImageText(old),
+          okText: 'Прошить так',
+          danger: false,
+        })
+        busy.value = true
+        if (!ok) {
+          say(`Не запущено: ${MODE_LABEL[mode]} — новый образ ещё не на всех картах`, false, true)
+          return
+        }
+        options = { ...options, allow_old_image: true }
+      } else {
+        throw e
+      }
     }
   }
   // Выбор снимается: следующие платы оператор отмечает с нуля
@@ -408,6 +439,31 @@ function bootcheck() {
   })
 }
 
+function reboot() {
+  const picked = needSelection(reboot, devices.value.filter((d) => d.online && !inWork(d)), 'Все свободные платы на связи',
+    'Свободных плат на связи нет')
+  if (!picked) return
+  const ds = selectedDevices.value.filter((d) => d.online && !inWork(d))
+  const skipped = selectedDevices.value.filter((d) => !d.online || inWork(d))
+  if (!ds.length) {
+    say('Перезагрузить можно только платы на связи и без задания', false, true)
+    return
+  }
+  ask({
+    title: `Перезагрузить платы: ${skippedNos(ds)}`,
+    message:
+      'Плата перезагрузится с тестовой microSD и вернётся на стенд примерно через минуту. Скачанная часть образа сохранится, скачивание продолжится.' +
+      (skipped.length ? `\nПлаты ${skippedNos(skipped)} пропущены: нет связи или идёт задание.` : ''),
+    okText: 'Перезагрузить',
+    danger: false,
+    run: async () => {
+      const r = await api.reboot(ds.map((d) => d.device_id))
+      selected.value = new Set()
+      say(`Перезагрузка, плат: ${r.sent.length}. Вернутся примерно через минуту`)
+    },
+  })
+}
+
 function identify() {
   const ids = selectedDevices.value.filter((d) => d.has_led).map((d) => d.device_id)
   if (!ids.length) return
@@ -488,6 +544,13 @@ function exportCsv() {
           Только BOOTCHECK
         </button>
         <button v-if="anyLed" :disabled="busy" @click="identify">Идентифицировать</button>
+        <button
+          :disabled="busy"
+          title="Перезагрузить выбранные платы с тестовой microSD (если плата зависла или не видна по SSH). Во время задания недоступно"
+          @click="reboot"
+        >
+          Перезагрузить
+        </button>
         <button :disabled="busy" @click="benchCheck">Проверка стенда</button>
         <button :disabled="batchId === null" @click="exportCsv">Экспорт CSV</button>
       </div>
@@ -584,6 +647,8 @@ function exportCsv() {
         :key="d.device_id"
         :device="d"
         :selected="selected.has(d.device_id)"
+        :os-key="osKey"
+        :os-name="osItem?.name"
         @pick="pick(d, $event)"
         @open="router.push(`/device/${d.device_id}`)"
       />
@@ -614,6 +679,15 @@ function exportCsv() {
       :error="customError"
       @ok="saveCustom"
       @cancel="customDialog = false"
+    />
+    <ConfirmDialog
+      v-if="yesNo"
+      :title="yesNo.title"
+      :message="yesNo.message"
+      :ok-text="yesNo.okText"
+      :danger="yesNo.danger"
+      @ok="answerYesNo(true)"
+      @cancel="answerYesNo(false)"
     />
     <RetestDialog
       v-if="retest"

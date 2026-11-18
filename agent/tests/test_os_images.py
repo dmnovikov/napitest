@@ -219,3 +219,75 @@ def test_job_pauses_download(tmp_path, images):
     ev = a.images._cancel
     asyncio.run(a.submit({"type": "job", "job_id": "j1", "mode": "test_only", "params": job_params("test_only")}))
     assert ev.is_set()
+
+
+def test_old_image_kept_until_new_ready(tmp_path, server, images):
+    """Прежний образ остаётся на карте (и годится для прошивки), пока новый не скачан и не проверен."""
+    old, _ = served(tmp_path, server, "armbian-5.img.zst")
+    a = sync_agent(tmp_path, server)
+    a.images.on_catalog({"sync": True, "images": [{"file": old["file"], "manifest": old}]})
+    run(a.images._sync_once())
+    cat = images / "catalog"
+    new, data = served(tmp_path, server, "armbian-6.img.zst")
+    RangeHandler.files["armbian-6.img.zst"] = data[:-10]          # обрыв: новый образ не докачался
+    a.images.on_catalog({"sync": True, "images": [{"file": new["file"], "manifest": new}]})
+    run(a.images._sync_once())
+    assert a.images.status["armbian-5.img.zst"] == {"state": "ready", "old": True}
+    assert a.images.status["armbian-6.img.zst"]["state"] == "error"
+    assert (cat / "armbian-5.img.zst").exists() and (cat / "armbian-6.img.zst.part").exists()
+    # прежним образом можно прошивать
+    a2 = make_agent(tmp_path)
+    assert a2.images.status["armbian-5.img.zst"]["state"] == "ready"
+    RangeHandler.files["armbian-6.img.zst"] = data
+    run(a.images._sync_once())
+    assert a.images.status == {"armbian-6.img.zst": {"state": "ready"}}
+    assert sorted(os.listdir(cat)) == ["armbian-6.img.zst", "armbian-6.manifest.json"]
+
+
+def test_old_image_removed_when_no_space(tmp_path, server, images, monkeypatch):
+    old, _ = served(tmp_path, server, "armbian-5.img.zst")
+    a = sync_agent(tmp_path, server)
+    a.images.on_catalog({"sync": True, "images": [{"file": old["file"], "manifest": old}]})
+    run(a.images._sync_once())
+    cat = images / "catalog"
+    new, data = served(tmp_path, server, "armbian-6.img.zst")
+    real = shutil.disk_usage
+    # места хватает, только когда прежнего образа уже нет
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: real(p) if not (cat / "armbian-5.img.zst").exists()
+                        else shutil._ntuple_diskusage(1, 1, 10))
+    a.images.on_catalog({"sync": True, "images": [{"file": new["file"], "manifest": new}]})
+    run(a.images._sync_once())
+    assert a.images.status == {"armbian-6.img.zst": {"state": "ready"}}
+    assert not (cat / "armbian-5.img.zst").exists()
+
+
+def test_network_error_retries_same_image(tmp_path, server, images):
+    """Обрыв скачивания: очередь не уходит на следующий образ, первый докачивается следующей попыткой."""
+    m1, d1 = served(tmp_path, server, "armbian-6.img.zst")
+    m2, _ = served(tmp_path, server, "napilinux-7.img.zst")
+    RangeHandler.files["armbian-6.img.zst"] = d1[:500]
+    a = sync_agent(tmp_path, server)
+    a.images.on_catalog({"sync": True, "images": [{"file": m1["file"], "manifest": m1},
+                                                  {"file": m2["file"], "manifest": m2}]})
+    run(a.images._sync_once())
+    assert a.images.status[m1["file"]]["state"] == "error"
+    assert [h[0] for h in RangeHandler.hits] == ["armbian-6.img.zst"]
+
+
+def test_reboot_refused_during_job(tmp_path):
+    a = make_agent(tmp_path)
+    a.state["job"] = {"job_id": "j", "finished": False, "stages": {}}
+    assert run(a.reboot()) is False and "reboot" not in a.backend.log
+    a.state["job"]["finished"] = True
+    assert run(a.reboot()) is True and "reboot" in a.backend.log
+
+
+def test_cardfix_unit(tmp_path):
+    from napi_factory_agent import cardfix
+    assert cardfix.fix_unit(tmp_path) is False                   # не карта стенда: ничего не создаётся
+    unit = tmp_path / cardfix.UNIT_PATH
+    unit.parent.mkdir(parents=True)
+    unit.write_text("[Unit]\nAfter=local-fs.target\nBefore=ssh.service ssh.socket\n")
+    assert cardfix.fix_unit(tmp_path) is True
+    assert "DefaultDependencies=no" in unit.read_text()
+    assert cardfix.fix_unit(tmp_path) is False

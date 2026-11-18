@@ -57,6 +57,8 @@ export interface DeviceView {
   mac_source: string | null
   agent_version: string | null
   test_sd_version: string | null
+  /** По ключу ОС из меню: готовность карты платы к прошивке. */
+  flash?: Record<string, FlashReady>
   kernel: string | null
   ram_bytes: number | null
   has_led: boolean
@@ -233,6 +235,33 @@ export interface AgentInfo {
   current: number
   online: number
   errors: { no: number | null; detail: string | null }[]
+}
+
+/** Карта в кардридере сервера (страница «microSD»). */
+export interface CardReaderImage {
+  file: string
+  source_file: string
+  version: string | null
+  size: number
+  state: 'ready' | 'partial' | 'unverified' | 'none'
+  have?: number
+}
+export interface CardReaderInfo {
+  available: boolean
+  state?: 'idle' | 'working' | 'done' | 'error'
+  action?: 'check' | 'load' | null
+  cards?: { dev: string; version?: string; images: CardReaderImage[] }[] | null
+  progress?: { file: string; pct: number; text: string } | null
+  error?: string | null
+  log?: string[] | null
+  age?: number | null
+}
+
+/** Можно ли прошить плату ОС из меню: образ на карте, прежний образ или ничего. */
+export interface FlashReady {
+  state: 'ready' | 'old' | 'none'
+  pct?: number | null
+  version?: string | null
 }
 
 export interface SdCardInfo {
