@@ -91,7 +91,7 @@ export const api = {
   batch: (id: number) => request<BatchDetail>('GET', `/batches/${id}`),
   device: (id: number) => request<DeviceDetail>('GET', `/devices/${id}`),
   refreshGrid: () =>
-    request<{ hidden: number; kept_busy: string; reconnect: number }>('POST', '/devices/refresh', {}),
+    request<{ hidden: number; kept_busy: string; reconnect: number; lost?: string }>('POST', '/devices/refresh', {}),
   identify: (id: number, seconds?: number) =>
     request<unknown>('POST', `/devices/${id}/identify`, seconds ? { seconds } : {}),
   setGolden: (id: number, is_golden: boolean) =>

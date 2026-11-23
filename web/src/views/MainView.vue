@@ -47,6 +47,7 @@ watch(
   },
   { immediate: true },
 )
+const osNames = computed(() => Object.fromEntries(osMenu.value.map((i) => [i.key, i.name])))
 const osItem = computed(() => osMenu.value.find((i) => i.key === osKey.value))
 const osInfo = computed(() => osLine(osItem.value, live.summary?.images, zeroFull.value))
 const osName = computed(() => {
@@ -511,7 +512,8 @@ function refreshGrid() {
   void guarded(async () => {
     const r = await api.refreshGrid()
     const parts = [`скрыто плат без связи: ${r.hidden}`, `переподключаются: ${r.reconnect}`]
-    if (r.kept_busy) parts.push(`не скрыты (есть задание, нажмите «Остановить»): ${r.kept_busy}`)
+    if (r.lost) parts.push(`пропали во время задания, задание закрыто: ${r.lost}`)
+    if (r.kept_busy) parts.push(`не скрыты (идёт задание или нет связи меньше минуты): ${r.kept_busy}`)
     say(parts.join('; '), false, !!r.kept_busy)
   })
 }
@@ -571,7 +573,7 @@ function exportCsv() {
         <button :disabled="!selected.size" @click="clearSelection">Снять выбор</button>
         <button
           :disabled="busy"
-          title="Убрать со стенда платы без связи (их итоги остаются в истории) и заново опросить подключённые платы: IP, MAC, тип платы"
+          title="Убрать со стенда платы без связи (их итоги остаются в истории) и заново опросить подключённые платы: IP, MAC, тип платы. Плата, пропавшая посреди задания дольше минуты, тоже убирается, её задание закрывается"
           @click="refreshGrid"
         >
           Скрыть офлайн, обнаружить онлайн платы
@@ -661,6 +663,7 @@ function exportCsv() {
         :selected="selected.has(d.device_id)"
         :os-key="osKey"
         :os-name="osItem?.name"
+        :os-names="osNames"
         @pick="pick(d, $event)"
         @open="router.push(`/device/${d.device_id}`)"
       />

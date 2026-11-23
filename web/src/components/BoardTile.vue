@@ -6,6 +6,7 @@ import { now } from '../lib/clock'
 import {
   TILE_LABEL,
   boardBadge,
+  cardDownloads,
   currentStageLine,
   etaText,
   formatAgo,
@@ -18,7 +19,7 @@ import {
   tileTimer,
 } from '../lib/format'
 
-const props = defineProps<{ device: DeviceView; selected: boolean; osKey?: string; osName?: string }>()
+const props = defineProps<{ device: DeviceView; selected: boolean; osKey?: string; osName?: string; osNames?: Record<string, string> }>()
 defineEmits<{ (e: 'pick', ev: MouseEvent): void; (e: 'open'): void }>()
 
 // Плату перезагрузили после прошлой проверки: квадрат «готова», старый итог — только пометкой
@@ -57,6 +58,14 @@ const img = computed(() => {
     text: `образа нет${pct ? ' · качается' + pct : ''}`,
     title: `${os}: образа на карте нет${pct ? ', скачано' + pct : ''}. Прошить плату пока нельзя, тесты запускать можно`,
   }
+})
+// Карта качает образ: видно всегда, какая бы ОС ни была выбрана в меню (если строка выше уже показала
+// процент этого же образа — не повторяем)
+const dl = computed(() => {
+  const shown = img.value && props.osKey && props.device.flash?.[props.osKey]?.pct != null ? props.osKey : ''
+  const items = cardDownloads(props.device).filter((i) => i.key !== shown)
+  if (!items.length) return ''
+  return 'карта качает: ' + items.map((i) => `${props.osNames?.[i.key] ?? i.key} ${i.pct} %`).join(', ')
 })
 const passWarn = computed(() => props.device.tile === 'pass' && jobHasWarn(shownJob.value))
 // PASS, но BOOTCHECK не подтвердил загрузку с SD-NAND: жёлтая плитка, проверить глазами
@@ -129,6 +138,7 @@ const title = computed(() => {
     <StageBar :job="shownJob" labels />
     <div v-if="flashed" class="img img-done" :title="`Прошито: ${flashed}`">{{ flashed }}</div>
     <div v-else-if="img" class="img" :class="img.cls" :title="img.title">{{ img.text }}</div>
+    <div v-if="dl" class="img img-dl" :title="`${dl}. Образ качается со стенда на microSD этой платы; когда скачается, строка исчезнет`">{{ dl }}</div>
     <div v-if="prev" class="prev" :class="'prev-' + prev.status" :title="prevLine">{{ prevLine }}</div>
     <div class="row line" :class="{ failtxt: failLine, warntxt: passWarn || bootUnconfirmed || netWarn }" :title="lineTitle">
       <span v-if="passWarn || bootUnconfirmed || netWarn" class="warn-ico">⚠</span>{{ line }}
@@ -237,6 +247,12 @@ const title = computed(() => {
 .img-none {
   color: #6b7280;
   background: #eceef1;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.img-dl {
+  color: #1d4f91;
+  background: #e3edfa;
   border-radius: 3px;
   padding: 0 4px;
 }

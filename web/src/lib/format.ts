@@ -264,6 +264,14 @@ export function formatShort(iso: string | null | undefined): string {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+/** Что карта платы качает прямо сейчас: [{key, pct}] (пусто — ничего). */
+export function cardDownloads(d: { online?: boolean; flash?: Record<string, { state?: string; pct?: number | null }> | null }) {
+  if (!d.online) return []
+  return Object.entries(d.flash ?? {})
+    .filter(([, f]) => f.pct != null)
+    .map(([key, f]) => ({ key, pct: Math.round(f.pct as number) }))
+}
+
 /** «FLASH: агент перезапущен» от агента — понятными словами: плата перезагрузилась посреди этапа. */
 export function plainDetail(detail: string | null | undefined): string {
   const m = /^([A-Z-]+): агент перезапущен$/.exec(detail ?? '')

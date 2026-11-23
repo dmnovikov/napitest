@@ -37,6 +37,7 @@ BOOT_NAT = "BOOTCHECK: плата за роутером (NAT), сервер её
 BOOT_BY_IP = "MAC не проверен: плата в другой сети, найдена по прежнему IP"
 BOOT_UNCONFIRMED_TEXTS = (BOOT_UNCONFIRMED, BOOT_UNCONFIRMED_SD, BOOT_NAT)
 # Итог задания от агента может заменить эти статусы (например, после долгого офлайна).
+LOST_STAGE_LABEL = {"ram": "RAM", "net": "NET", "sdnand": "NAND", "flash": "FLASH", "boot": "BOOT"}
 OVERRIDABLE_STATUSES = ("queued", "running", "offline")
 
 
@@ -145,6 +146,7 @@ class Factory:
         self.net = NetScheduler(ports, lease_s=lease)
         self._bg: list[asyncio.Task] = []
         self._last_seen_flush = time.monotonic()
+        self._started = time.monotonic()
         # Образы ОС для SD-NAND и их наличие на тестовых microSD (по отчётам агентов)
         self.catalog = Catalog(settings, profile, db, self._catalog_changed)
         self.card_images: dict[int, dict[str, dict]] = {}   # device_id -> {file: {state, pct, detail}}
@@ -1300,9 +1302,34 @@ class Factory:
                               | set(hidden))
         return hidden, kept
 
+    def _offline_for(self, device_id: int) -> float:
+        """Сколько секунд от платы нет heartbeat (после перезапуска сервера — не больше, чем он работает)."""
+        return time.monotonic() - max(self.last_hb.get(device_id, self._started), self._started)
+
+    async def _close_lost_jobs(self) -> list[int]:
+        """Плата пропала посреди задания (зависла, отвалился адаптер) и молчит дольше lost_job_s:
+        задание закрывается как «нет связи», чтобы «Скрыть офлайн» убрала её плитку. Вернётся и продолжит —
+        статус снова станет «идёт» (см. приём progress). Платы, ждущие BOOTCHECK, не трогаем: там тишина — норма."""
+        limit = float(self.profile.section("timeouts").get("lost_job_s", 60))
+        lost = []
+        for dev in self._visible_devices():
+            if self.is_online(dev["id"]) or self._offline_for(dev["id"]) < limit:
+                continue
+            job = self._active_job(dev["id"])
+            if job is None or job["status"] == "awaiting_boot":
+                continue
+            stages = self.job_stages(job)
+            cur = next((s for s, st in stages.items() if st.get("state") == "running"),
+                       next((s for s, st in stages.items() if st.get("state") == "pending"), None))
+            where = f" на этапе {LOST_STAGE_LABEL.get(cur, cur)}" if cur else ""
+            await self._finalize(job, "offline", detail=f"плата пропала{where}: зависла или потеряла связь")
+            lost.append(dev["id"])
+        return lost
+
     async def refresh_grid(self, operator: dict) -> dict:
         """«Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки
         (история остаётся), свободные агенты переподключаются и заново присылают IP, MAC и тип платы."""
+        lost = await self._close_lost_jobs()
         hidden, kept = self._hide_offline()
         reconnect = []
         idle = [d for d in self.agents if self.is_online(d) and self._active_job(d) is None
@@ -1315,9 +1342,11 @@ class Factory:
                 except Exception:
                     pass
                 reconnect.append(device_id)
-        self.audit(operator["username"], "grid_refresh", {"hidden": hidden, "kept_busy": kept, "reconnect": reconnect})
+        self.audit(operator["username"], "grid_refresh", {"hidden": hidden, "kept_busy": kept, "reconnect": reconnect,
+                                                          "lost": lost})
         self.grid_reset = True
-        return {"hidden": len(hidden), "kept_busy": self._nos(kept) if kept else "", "reconnect": len(reconnect)}
+        return {"hidden": len(hidden), "kept_busy": self._nos(kept) if kept else "", "reconnect": len(reconnect),
+                "lost": self._nos(lost) if lost else ""}
 
     def previously_tested(self, device_ids: list[int], mode: str) -> list[dict]:
         """Платы, которые уже проходили этот вид проверки (по cpuid в базе).

@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { DeviceView, Summary } from '../api/types'
 import { now } from '../lib/clock'
-import { MODE_LABEL, boardsSummary, formatDuration, formatTime, secondsSince } from '../lib/format'
+import { MODE_LABEL, boardsSummary, cardDownloads, formatDuration, formatTime, secondsSince } from '../lib/format'
 
 const props = defineProps<{ summary: Summary | null; devices: DeviceView[] }>()
 
@@ -38,6 +38,8 @@ const coffee = computed(() => {
   return { text: `☕ можно отойти на ~${min} мин`, need: false }
 })
 
+// Сколько карт ещё качают образы со стенда (и номера плат): стенд не готов шить всё
+const downloading = computed(() => props.devices.filter((d) => cardDownloads(d).length).map((d) => d.display_no))
 const elapsed = computed(() => {
   const b = props.summary?.batch
   if (!b?.started_at) return null
@@ -96,6 +98,9 @@ const counters = computed(() => {
         <span class="lbl">microSD:</span>
         <span class="mono">{{ summary?.versions.test_sd?.length ? summary.versions.test_sd.join(', ') : '—' }}</span>
         <span class="lbl">Образ:</span> <span class="mono">{{ summary?.versions.image ?? '—' }}</span>
+      </div>
+      <div v-if="downloading.length" class="boards dl" title="Карты качают образы ОС со стенда. Прошивать этим образом можно, когда закачка закончится; тесты запускать можно">
+        ⬇ карты качают образы: {{ downloading.length }} (платы № {{ downloading.join(', ') }})
       </div>
       <div v-if="summary?.net_stand" class="boards warn">
         ⚠ NET не прошли почти все платы партии — похоже на сеть стенда, а не на брак: проверьте коммутатор, кабель
@@ -213,6 +218,10 @@ const counters = computed(() => {
 .boards.ok {
   color: #13692f;
   background: #e3f4e8;
+}
+.boards.dl {
+  color: #1d4f91;
+  background: #e3edfa;
 }
 .boards.warn {
   color: #6b4500;

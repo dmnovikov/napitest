@@ -52,7 +52,15 @@ def test_refresh_keeps_offline_board_with_job(tmp_path):
         a.close()
         wait_for(lambda: not ids(c)[da]["online"])
         r = c.post("/api/v1/devices/refresh").json()
-        assert r["hidden"] == 0 and r["kept_busy"] == "1" and da in ids(c)
+        assert r["hidden"] == 0 and r["kept_busy"] == "1" and da in ids(c) and r["lost"] == ""
+        # Плата молчит дольше минуты (зависла на этапе): задание закрывается, плитка уходит
+        core = c.app.state.core.factory
+        core.last_hb[da] -= 100
+        core._started -= 100
+        r = c.post("/api/v1/devices/refresh").json()
+        assert r["lost"] == "1" and r["hidden"] == 1 and r["kept_busy"] == "" and da not in ids(c)
+        job = c.get(f"/api/v1/devices/{da}").json()["jobs"][0]
+        assert job["status"] == "offline" and "плата пропала на этапе" in job["detail"]
 
 
 def test_lower_expected_hides_offline(tmp_path):

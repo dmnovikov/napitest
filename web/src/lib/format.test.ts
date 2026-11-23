@@ -4,6 +4,7 @@ import {
   STAGE_LABEL,
   TILE_LABEL,
   currentStageLine,
+  cardDownloads,
   plainDetail,
   previousText,
   shownStages,
@@ -91,6 +92,13 @@ describe('tile helpers', () => {
     expect(currentStageLine(j, 'awaiting_boot')).toBe('BOOTCHECK: ждём загрузки с SD-NAND')
     expect(currentStageLine(job({ status: 'awaiting_boot' }), 'awaiting_boot')).toBe('BOOTCHECK: ожидание загрузки')
   })
+  it('card downloads', () => {
+    const flash = { armbian: { state: 'old', pct: 97.5 }, napilinux: { state: 'ready' } }
+    expect(cardDownloads({ online: true, flash })).toEqual([{ key: 'armbian', pct: 98 }])
+    expect(cardDownloads({ online: false, flash })).toEqual([])
+    expect(cardDownloads({ online: true })).toEqual([])
+  })
+
   it('board rebooted during a stage', () => {
     expect(plainDetail('FLASH: агент перезапущен')).toBe('прошивка прервана: плата перезагрузилась, прошейте заново')
     expect(plainDetail('RAM: агент перезапущен')).toBe(

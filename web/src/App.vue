@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from './api/http'
 import { live, startLive, stopLive } from './api/live'
 import { session } from './session'
+import { checkUpdate, startUpdateWatch, updateReady } from './lib/update'
 
 const router = useRouter()
 const route = useRoute()
@@ -13,6 +14,18 @@ watch(
   (u) => (u ? startLive() : stopLive()),
   { immediate: true },
 )
+
+// Стенд обновили: раз в минуту и сразу после возврата связи с сервером сверяем версию страницы
+startUpdateWatch()
+watch(
+  () => live.connected,
+  (on) => {
+    if (on) void checkUpdate()
+  },
+)
+function reloadPage() {
+  location.reload()
+}
 
 async function logout() {
   try {
@@ -42,6 +55,23 @@ async function logout() {
       <span class="user">{{ session.username }}</span>
       <button class="link" @click="logout">Выйти</button>
     </header>
+    <div v-if="updateReady" class="update-hint">
+      Стенд обновлён — обновите страницу, чтобы увидеть изменения.
+      <button @click="reloadPage">Обновить</button>
+    </div>
     <main class="content"><router-view /></main>
   </div>
 </template>
+
+<style scoped>
+.update-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  font-weight: 600;
+  color: #1d4f91;
+  background: #e3edfa;
+  border-bottom: 1px solid #b9cfee;
+}
+</style>
