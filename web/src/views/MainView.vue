@@ -12,6 +12,7 @@ import type { BoardType, DeviceView, Mode, RetestItem } from '../api/types'
 import { BOARD_NAME, MODE_LABEL, formatTime, osLine } from '../lib/format'
 import { session } from '../session'
 import { oldImageInfo, oldImageText, retestList } from '../lib/retest'
+import { clampSeconds, loadSeconds, saveSeconds } from '../lib/identify'
 
 const router = useRouter()
 
@@ -464,12 +465,20 @@ function reboot() {
   })
 }
 
+const identifySec = ref(loadSeconds())
+function fixIdentifySec() {
+  identifySec.value = clampSeconds(identifySec.value)
+  saveSeconds(identifySec.value)
+}
+
 function identify() {
   const ids = selectedDevices.value.filter((d) => d.has_led).map((d) => d.device_id)
   if (!ids.length) return
+  fixIdentifySec()
+  const sec = identifySec.value
   void guarded(async () => {
-    for (const id of ids) await api.identify(id)
-    say(`Идентификация: у ${ids.length} плат(ы) светодиод горит непрерывно 10 с`)
+    for (const id of ids) await api.identify(id, sec)
+    say(`Идентификация: у ${ids.length} плат(ы) светодиод горит непрерывно ${sec} с`)
   })
 }
 
@@ -544,6 +553,9 @@ function exportCsv() {
           Только BOOTCHECK
         </button>
         <button v-if="anyLed" :disabled="busy" @click="identify">Идентифицировать</button>
+        <label v-if="anyLed" class="idsec" title="Сколько секунд гореть светодиоду (5–600)">
+          <input v-model.number="identifySec" type="number" min="5" max="600" step="5" @change="fixIdentifySec" /> с
+        </label>
         <button
           :disabled="busy"
           title="Перезагрузить выбранные платы с тестовой microSD (если плата зависла или не видна по SSH). Во время задания недоступно"
@@ -856,5 +868,16 @@ function exportCsv() {
   color: var(--muted);
   padding: 30px;
   text-align: center;
+}
+.idsec {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.idsec input {
+  width: 4.5em;
+  padding: 4px 6px;
 }
 </style>

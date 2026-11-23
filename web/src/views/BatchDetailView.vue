@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import StageBar from '../components/StageBar.vue'
 import { api, links } from '../api/http'
 import type { BatchDetail, BatchJob, JobView } from '../api/types'
-import { JOB_STATUS_LABEL, MODE_LABEL, STAGE_LONG, formatDateTime, BOARD_NAME } from '../lib/format'
+import { JOB_STATUS_LABEL, MODE_LABEL, STAGE_LONG, formatDateTime, BOARD_NAME, plainDetail } from '../lib/format'
 
 const route = useRoute()
 const id = computed(() => Number(route.params.id))
@@ -37,7 +37,7 @@ function asView(j: BatchJob): JobView {
 function failDetails(j: BatchJob) {
   return Object.entries(j.stages)
     .filter(([, s]) => s && (s.state === 'fail' || s.state === 'error' || s.state === 'interrupted'))
-    .map(([k, s]) => s?.detail || `${STAGE_LONG[k as keyof typeof STAGE_LONG] ?? k}: ${s?.state}`)
+    .map(([k, s]) => plainDetail(s?.detail) || `${STAGE_LONG[k as keyof typeof STAGE_LONG] ?? k}: ${s?.state}`)
     .join('; ')
 }
 

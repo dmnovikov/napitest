@@ -62,6 +62,10 @@ class StopIn(BaseModel):
     device_ids: list[int] = Field(default_factory=list)
 
 
+class IdentifyIn(BaseModel):
+    seconds: int = Field(30, ge=5, le=600)
+
+
 class GoldenIn(BaseModel):
     is_golden: bool
 
@@ -232,9 +236,11 @@ async def reboot(body: StopIn, request: Request, op: dict = Depends(operator)):
 
 
 @router.post("/devices/{device_id}/identify")
-async def identify(device_id: int, request: Request, op: dict = Depends(operator)):
+async def identify(device_id: int, request: Request, body: IdentifyIn | None = None,
+                   op: dict = Depends(operator)):
+    seconds = (body or IdentifyIn()).seconds
     try:
-        await core(request).factory.identify(op, device_id)
+        await core(request).factory.identify(op, device_id, seconds)
     except FactoryError as exc:
         return handle(exc)
     return {"ok": True}

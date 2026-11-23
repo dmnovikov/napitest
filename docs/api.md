@@ -114,7 +114,7 @@
 {"type":"net_grant","job_id":"j_…","host":"192.168.10.1","port":5202}
 {"type":"serial","job_id":"j_…","serial":"NC-2610-0017","batch":"B-20261010-01","date":"2026-10-10"}
 {"type":"serial","job_id":"j_…","error":"device has no TEST_PASS"}
-{"type":"identify","seconds":10}
+{"type":"identify","seconds":30}
 {"type":"reboot"}                      // перезагрузка платы; агент не выполняет, пока идёт задание
 {"type":"images","sync":true,"images":[{"file":"armbian-3.img.zst","manifest":{…манифест…}}],
  "agent":{"version":"3f9c1a0b7d2e","sha256":"…","size":151234}}
@@ -248,7 +248,7 @@ PASS с неподтверждённой загрузкой показывает
 | GET | `/devices/{id}` | карточка платы |
 | POST | `/devices/bootcheck` | «Только BOOTCHECK» `{"device_ids":[…]}`: последнее задание каждой платы снова ждёт загрузку с SD-NAND (FLASH пройден, загрузка не подтверждена); платы без связи допустимы. 409 с причиной для неподходящих плат. Ответ `{"jobs"}` |
 | POST | `/devices/refresh` | «Скрыть офлайн, обнаружить онлайн платы»: платы без связи и без активного задания уходят из сетки до следующего подключения, свободные агенты переподключаются; ответ `{"hidden","kept_busy","reconnect"}` |
-| POST | `/devices/{id}/identify` | мигание LED |
+| POST | `/devices/{id}/identify` | светодиод горит непрерывно; тело `{"seconds": 30}` необязательно (5–600, по умолчанию 30) |
 | POST | `/devices/reboot` | `{device_ids}`: перезагрузить платы (на связи и без задания) |
 | POST | `/devices/{id}/golden` | `{"is_golden": true}` |
 | GET | `/devices/{id}/label` | HTML-этикетка с QR (только при PASS и наличии серийника) |

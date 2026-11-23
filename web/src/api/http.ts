@@ -92,7 +92,8 @@ export const api = {
   device: (id: number) => request<DeviceDetail>('GET', `/devices/${id}`),
   refreshGrid: () =>
     request<{ hidden: number; kept_busy: string; reconnect: number }>('POST', '/devices/refresh', {}),
-  identify: (id: number) => request<unknown>('POST', `/devices/${id}/identify`, {}),
+  identify: (id: number, seconds?: number) =>
+    request<unknown>('POST', `/devices/${id}/identify`, seconds ? { seconds } : {}),
   setGolden: (id: number, is_golden: boolean) =>
     request<unknown>('POST', `/devices/${id}/golden`, { is_golden }),
   audit: () => request<AuditRow[]>('GET', '/audit'),

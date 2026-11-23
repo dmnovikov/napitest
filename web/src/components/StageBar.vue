@@ -2,7 +2,7 @@
 import type { JobView } from '../api/types'
 import { STAGES } from '../api/types'
 import { computed } from 'vue'
-import { STAGE_LABEL, STAGE_LONG, STATE_LABEL, hasWarn, shownStages, stageClass } from '../lib/format'
+import { STAGE_LABEL, STAGE_LONG, STATE_LABEL, hasWarn, plainDetail, shownStages, stageClass } from '../lib/format'
 
 const props = defineProps<{ job: JobView | null; labels?: boolean }>()
 const shown = computed(() => shownStages(props.job))
@@ -19,7 +19,7 @@ function titleOf(name: (typeof STAGES)[number]) {
   const s = props.job?.stages?.[name]
   const st = s?.state ?? 'pending'
   const warns = s?.warnings?.length ? '\n⚠ ' + s.warnings.join('\n⚠ ') : s?.warn ? '\n⚠ есть замечания' : ''
-  return `${STAGE_LONG[name]}: ${STATE_LABEL[st] ?? st}${s?.detail ? ' — ' + s.detail : ''}${warns}`
+  return `${STAGE_LONG[name]}: ${STATE_LABEL[st] ?? st}${s?.detail ? ' — ' + plainDetail(s.detail) : ''}${warns}`
 }
 function warnOf(name: (typeof STAGES)[number]) {
   return hasWarn(props.job?.stages?.[name])

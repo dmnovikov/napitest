@@ -4,6 +4,7 @@ import {
   STAGE_LABEL,
   TILE_LABEL,
   currentStageLine,
+  plainDetail,
   previousText,
   shownStages,
   formatDuration,
@@ -90,6 +91,15 @@ describe('tile helpers', () => {
     expect(currentStageLine(j, 'awaiting_boot')).toBe('BOOTCHECK: ждём загрузки с SD-NAND')
     expect(currentStageLine(job({ status: 'awaiting_boot' }), 'awaiting_boot')).toBe('BOOTCHECK: ожидание загрузки')
   })
+  it('board rebooted during a stage', () => {
+    expect(plainDetail('FLASH: агент перезапущен')).toBe('прошивка прервана: плата перезагрузилась, прошейте заново')
+    expect(plainDetail('RAM: агент перезапущен')).toBe(
+      'проверка прервана на этапе RAM: плата перезагрузилась, запустите заново',
+    )
+    expect(plainDetail('NET: tx 41')).toBe('NET: tx 41')
+    expect(plainDetail(null)).toBe('')
+  })
+
   it('previous result line', () => {
     const p = { job_id: 'j', status: 'pass', mode: 'test_flash' as const, finished_at: '2026-10-11T14:32:00', batch: 'B', detail: null, warnings_count: 1 }
     expect(previousText(p)).toBe('уже проверялась: PASS ⚠ · 11.10 14:32 · Тесты + прошивка')

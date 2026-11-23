@@ -1381,7 +1381,7 @@ class Factory:
         self.audit(operator["username"], "stop", {"batch_id": batch_id, "devices": device_ids, "jobs": stopped})
         return {"jobs": stopped}
 
-    async def identify(self, operator: dict, device_id: int) -> None:
+    async def identify(self, operator: dict, device_id: int, seconds: int = 30) -> None:
         dev = self.db.one("SELECT has_led FROM device WHERE id = ?", (device_id,))
         if dev is None:
             raise FactoryError("неизвестная плата", 404)
@@ -1390,8 +1390,8 @@ class Factory:
         conn = self.agents.get(device_id)
         if conn is None or not self.is_online(device_id):
             raise FactoryError("плата не на связи", 409)
-        await conn.send({"type": "identify", "seconds": 10})
-        self.audit(operator["username"], "identify", {"device_id": device_id})
+        await conn.send({"type": "identify", "seconds": seconds})
+        self.audit(operator["username"], "identify", {"device_id": device_id, "seconds": seconds})
 
     async def reboot(self, operator: dict, device_ids: list[int]) -> dict:
         """«Перезагрузить плату»: команда агенту на карте. Не выполняется, пока у платы есть задание."""

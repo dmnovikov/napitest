@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import StageBar from '../components/StageBar.vue'
 import { api, links } from '../api/http'
+import { clampSeconds, loadSeconds, saveSeconds } from '../lib/identify'
 import { live } from '../api/live'
 import type { BoardType, DeviceDetail, DeviceJob } from '../api/types'
 import { now } from '../lib/clock'
@@ -19,6 +20,7 @@ import {
   formatDuration,
   formatMeasurement,
   hasWarn,
+  plainDetail,
   stageClass,
   tileClass,
 } from '../lib/format'
@@ -90,9 +92,16 @@ function openLabel() {
   window.open(links.label(id.value), '_blank')
 }
 
+const identifySec = ref(loadSeconds())
+function fixIdentifySec() {
+  identifySec.value = clampSeconds(identifySec.value)
+  saveSeconds(identifySec.value)
+}
+
 async function identify() {
+  fixIdentifySec()
   try {
-    await api.identify(id.value)
+    await api.identify(id.value, identifySec.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
@@ -146,6 +155,9 @@ const canLabel = computed(() => {
           </button>
           <button @click="toggleGolden">{{ device.is_golden ? 'Снять golden sample' : 'Сделать golden sample' }}</button>
           <button v-if="device.has_led" @click="identify">Идентифицировать</button>
+          <label v-if="device.has_led" class="idsec" title="Сколько секунд гореть светодиоду (5–600)">
+            <input v-model.number="identifySec" type="number" min="5" max="600" step="5" @change="fixIdentifySec" /> с
+          </label>
         </div>
       </div>
 
@@ -207,7 +219,7 @@ const canLabel = computed(() => {
                 <td>{{ typeof s?.pct === 'number' ? Math.round(s.pct) + ' %' : '' }}</td>
                 <td class="mono">{{ typeof s?.t === 'number' ? formatDuration(s.t) : '' }}</td>
                 <td>
-                  {{ s?.detail ?? '' }}
+                  {{ plainDetail(s?.detail) }}
                   <ul v-if="s?.warnings?.length" class="warns"><li v-for="(w, i) in s.warnings" :key="i">⚠ {{ w }}</li></ul>
                   <span v-else-if="hasWarn(s)" class="warns-inline">⚠ есть замечания</span>
                 </td>
@@ -284,7 +296,7 @@ const canLabel = computed(() => {
                 <b>{{ STAGE_LONG[s.stage] ?? s.stage }}</b>
                 <span class="chip" :class="stageClass(s.state)">{{ STATE_LABEL[s.state] ?? s.state }}</span>
                 <span class="mono muted">{{ typeof s.t === 'number' ? formatDuration(s.t) : '' }}</span>
-                <span>{{ s.detail ?? '' }}</span>
+                <span>{{ plainDetail(s.detail) }}</span>
               </div>
               <ul v-if="s.warnings?.length" class="warns"><li v-for="(w, i) in s.warnings" :key="i">⚠ {{ w }}</li></ul>
               <table v-if="s.measurements && Object.keys(s.measurements).length" class="kv small">
@@ -518,5 +530,16 @@ const canLabel = computed(() => {
   color: #8a4b00;
   font-weight: 600;
   white-space: pre-line;
+}
+.idsec {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.idsec input {
+  width: 4.5em;
+  padding: 4px 6px;
 }
 </style>

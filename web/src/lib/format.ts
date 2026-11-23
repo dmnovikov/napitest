@@ -264,8 +264,20 @@ export function formatShort(iso: string | null | undefined): string {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+/** «FLASH: агент перезапущен» от агента — понятными словами: плата перезагрузилась посреди этапа. */
+export function plainDetail(detail: string | null | undefined): string {
+  const m = /^([A-Z-]+): агент перезапущен$/.exec(detail ?? '')
+  if (!m) return detail ?? ''
+  return m[1] === 'FLASH'
+    ? 'прошивка прервана: плата перезагрузилась, прошейте заново'
+    : `проверка прервана на этапе ${m[1]}: плата перезагрузилась, запустите заново`
+}
+
 /** Пометка «уже проверялась» для квадрата: результат, когда, каким режимом. */
 export function previousText(p: PreviousResult): string {
+  const plain = plainDetail(p.detail)
+  if (p.status === 'interrupted' && plain !== (p.detail ?? ''))
+    return `уже проверялась: ${plain} · ${formatShort(p.finished_at)} · ${MODE_LABEL[p.mode] ?? p.mode}`
   const res = JOB_STATUS_LABEL[p.status] ?? p.status
   const warn = p.status === 'pass' && p.warnings_count ? ' ⚠' : ''
   const why = p.status !== 'pass' && p.detail ? ` (${p.detail})` : ''

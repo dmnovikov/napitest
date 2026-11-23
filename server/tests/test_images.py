@@ -371,3 +371,19 @@ def test_card_reader(tmp_path, monkeypatch):
         assert any(x["action"] == "card_reader_load" for x in c.get("/api/v1/audit").json())
     finally:
         c.__exit__(None, None, None)
+
+
+def test_identify_seconds(tmp_path):
+    c = make_client(tmp_path)
+    try:
+        a = Agent(c, "CPU1", has_led=True)
+        url = f"/api/v1/devices/{a.ack['device_id']}/identify"
+        assert c.post(url, json={}).status_code == 200
+        assert a.recv("identify")["seconds"] == 30             # по умолчанию
+        assert c.post(url, json={"seconds": 120}).status_code == 200
+        assert a.recv("identify")["seconds"] == 120
+        assert c.post(url, json={"seconds": 1}).status_code == 422
+        assert c.post(url, json={"seconds": 5000}).status_code == 422
+    finally:
+        close_agents()
+        c.__exit__(None, None, None)
